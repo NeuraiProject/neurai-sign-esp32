@@ -9,7 +9,13 @@
 export { NeuraiESP32 } from "./NeuraiESP32.js";
 
 // PSBT utilities
-export { buildPSBT, finalizePSBT, validatePSBT } from "./psbt.js";
+export {
+  buildPSBT,
+  buildPSBTFromRawTransaction,
+  finalizePSBT,
+  finalizeSignedPSBT,
+  validatePSBT,
+} from "./psbt.js";
 
 // Serial connection (for advanced use)
 export { SerialConnection } from "./serial.js";
@@ -28,6 +34,8 @@ export type {
   IUTXO,
   ITxOutput,
   IBuildPSBTOptions,
+  IBuildPSBTFromRawOptions,
+  IPSBTInputMetadata,
   IDeviceInfo,
   IAddressResponse,
   IBip32PubkeyResponse,

@@ -55,7 +55,14 @@ export class SerialConnection {
     }
 
     this.port = await navigator.serial.requestPort({ filters: this.filters });
-    await this.port.open({ baudRate: this.baudRate });
+    await this.port.open({
+      baudRate: this.baudRate,
+      dataBits: 8,
+      stopBits: 1,
+      parity: "none",
+      flowControl: "none",
+      bufferSize: 8192,
+    });
 
     // Set up readable stream (text decoding)
     const decoder = new TextDecoderStream();
@@ -69,7 +76,11 @@ export class SerialConnection {
 
     // Start background read loop
     this.isReading = true;
-    this.readLoop();
+    void this.readLoop();
+
+    // Give the ESP32 CDC port time to settle after connect/re-enumeration.
+    await this.delay(1200);
+    this.responseQueue = [];
   }
 
   /**
@@ -127,6 +138,7 @@ export class SerialConnection {
     // The ESP32 CDC serial buffer can lose data if sent too fast in one write.
     const json = JSON.stringify(command);
     await this.writeChunked(json);
+    await this.writer.ready;
     await this.writer.write("\n");
 
     // Wait for response
@@ -154,6 +166,7 @@ export class SerialConnection {
 
     const json = JSON.stringify(command);
     await this.writeChunked(json);
+    await this.writer.ready;
     await this.writer.write("\n");
 
     // Wait for a non-processing response
@@ -247,6 +260,7 @@ export class SerialConnection {
 
     for (let offset = 0; offset < data.length; offset += chunkSize) {
       const chunk = data.slice(offset, offset + chunkSize);
+      await this.writer.ready;
       await this.writer.write(chunk);
       if (offset + chunkSize < data.length) {
         await this.delay(pauseMs);

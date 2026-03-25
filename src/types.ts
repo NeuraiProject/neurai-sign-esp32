@@ -47,6 +47,22 @@ export interface IBuildPSBTOptions {
   feeRate?: number;
 }
 
+export interface IPSBTInputMetadata {
+  txid: string;
+  vout: number;
+  sequence?: number;
+  rawTxHex: string;
+  pubkey: string;
+  masterFingerprint: string;
+  derivationPath: string;
+}
+
+export interface IBuildPSBTFromRawOptions {
+  network: NetworkType;
+  rawUnsignedTransaction: string;
+  inputs: IPSBTInputMetadata[];
+}
+
 // ─── Device responses ────────────────────────────────────────────────────────
 
 export interface IDeviceInfo {

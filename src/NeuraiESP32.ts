@@ -19,7 +19,7 @@
  */
 
 import { SerialConnection } from "./serial.js";
-import { buildPSBT, finalizePSBT } from "./psbt.js";
+import { buildPSBT, finalizeSignedPSBT } from "./psbt.js";
 import type {
   DeviceResponse,
   IAddressResponse,
@@ -216,7 +216,11 @@ export class NeuraiESP32 {
     const signResponse = await this.signPsbt(psbtBase64);
 
     // 3. Finalize and extract raw transaction
-    const { txHex, txId } = finalizePSBT(signResponse.psbt, network);
+    const { txHex, txId } = finalizeSignedPSBT(
+      psbtBase64,
+      signResponse.psbt,
+      network
+    );
 
     return {
       signedPsbtBase64: signResponse.psbt,

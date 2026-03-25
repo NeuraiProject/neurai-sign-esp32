@@ -1,6 +1,6 @@
 {
   "name": "@neuraiproject/neurai-sign-esp32",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Create and sign PSBTs for Neurai via ESP32 hardware wallet",
   "type": "module",
   "source": "src/index.ts",
@@ -35,6 +35,7 @@
   "dependencies": {
     "@bitcoinerlab/secp256k1": "1.2.0",
     "bitcoinjs-lib": "7.0.1",
+    "buffer": "^6.0.3",
     "ecpair": "3.0.0",
     "varuint-bitcoin": "2.0.0"
   },
