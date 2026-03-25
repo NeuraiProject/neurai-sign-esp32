@@ -1,6 +1,6 @@
 # neurai-sign-esp32
 
-Create and sign Neurai (XNA) transactions via ESP32 hardware wallet.
+Create and sign Neurai (XNA) and asset transactions via ESP32 hardware wallet.
 
 This library handles the full PSBT workflow against a NeuraiHW device:
 build an unsigned PSBT, send it over USB Serial for signing, receive
@@ -14,8 +14,15 @@ PSBT construction and the Web Serial API for device communication.
 
 EXPERIMENTAL.
 
-Only XNA (native coin) transfers are supported for now.
-Asset transfers will be added in a future version.
+This library supports:
+- XNA transfers
+- Asset transfers
+- BIP32 account discovery via `get_bip32_pubkey`
+
+Asset transfers use the same PSBT signing flow as XNA transfers. The transaction
+outputs are still signed from the raw unsigned transaction, while optional
+display metadata can be provided to the device so the firmware can show the
+asset name, transferred amount, destination address, and fee more clearly.
 
 ## Install
 
@@ -112,6 +119,40 @@ console.log(txHex); // ready for sendrawtransaction
 await device.disconnect();
 ```
 
+### Asset transfer display metadata
+
+When signing an asset transfer, you can attach optional display metadata to
+the `sign_psbt` request. This does not affect the signature itself. It only
+helps the ESP32 firmware render a better transaction review screen.
+
+```javascript
+import {
+  NeuraiESP32,
+  buildAssetTransferDisplayMetadata,
+} from "@neuraiproject/neurai-sign-esp32";
+
+const device = new NeuraiESP32();
+await device.connect();
+
+const display = buildAssetTransferDisplayMetadata({
+  assetName: "MY_ASSET",
+  assetAmount: 1,
+  destinationAddress: "Nxxx...",
+  destinationCount: 1,
+  changeAddress: "Nchange...",
+  changeCount: 1,
+  inputAddresses: ["Ninput1...", "Ninput2..."],
+  feeAmount: 0.01234567,
+  baseCurrency: "XNA",
+});
+
+const signed = await device.signPsbt(psbtBase64, display);
+```
+
+This metadata is especially useful for asset transfers because a standard PSBT
+does not expose high-level fields such as `assetName` or `assetAmount` in a
+simple, display-ready form.
+
 ### Get BIP32 extended public key
 
 ```javascript
@@ -197,15 +238,28 @@ Main class for device interaction.
 | `getAddress()` | Get address + pubkey (requires confirmation) |
 | `getBip32Pubkey()` | Get account xpub (requires confirmation) |
 | `signPsbt(base64)` | Sign a PSBT (requires confirmation) |
+| `signPsbt(base64, display?)` | Sign a PSBT and optionally send display metadata |
 | `signTransaction(opts)` | Build + sign + finalize in one call |
 
 ### `buildPSBT(options)`
 
 Build an unsigned PSBT for P2PKH. Returns base64 string.
 
+### `buildPSBTFromRawTransaction(options)`
+
+Build an unsigned PSBT from an already-created raw unsigned transaction plus
+input metadata. This is the preferred path when the wallet already handles coin
+selection, fee calculation, asset outputs, and change outputs externally.
+
 ### `finalizePSBT(base64, network)`
 
 Finalize a signed PSBT. Returns `{ txHex, txId }`.
+
+### `finalizeSignedPSBT(originalPsbtBase64, signedPsbtBase64, network)`
+
+Merge a signed PSBT returned by NeuraiHW with the original PSBT and finalize it.
+This helper also supports the minimal PSBT format returned by `uNeurai`, and
+includes fallback logic for legacy P2PKH finalization used by Neurai.
 
 ### `validatePSBT(base64, network)`
 
