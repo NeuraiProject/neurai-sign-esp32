@@ -27,6 +27,7 @@ import type {
   IDeviceInfo,
   IErrorResponse,
   ISerialOptions,
+  ISigningDisplayMetadata,
   ISignPsbtResponse,
   ISignResult,
   IUTXO,
@@ -132,9 +133,16 @@ export class NeuraiESP32 {
    *
    * Use this if you build the PSBT yourself.
    */
-  async signPsbt(psbtBase64: string): Promise<ISignPsbtResponse> {
+  async signPsbt(
+    psbtBase64: string,
+    display?: ISigningDisplayMetadata
+  ): Promise<ISignPsbtResponse> {
     const response = await this.serial.sendCommandFinal(
-      { action: "sign_psbt", psbt: psbtBase64 },
+      {
+        action: "sign_psbt",
+        psbt: psbtBase64,
+        ...(display ? { display } : {}),
+      },
       65000
     );
 
@@ -171,6 +179,7 @@ export class NeuraiESP32 {
     masterFingerprint?: string;
     derivationPath?: string;
     feeRate?: number;
+    display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
     // Use cached device info if available for defaults
     const info = this.deviceInfo;
@@ -213,7 +222,7 @@ export class NeuraiESP32 {
     });
 
     // 2. Send to ESP32 for signing
-    const signResponse = await this.signPsbt(psbtBase64);
+    const signResponse = await this.signPsbt(psbtBase64, options.display);
 
     // 3. Finalize and extract raw transaction
     const { txHex, txId } = finalizeSignedPSBT(

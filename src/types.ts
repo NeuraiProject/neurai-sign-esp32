@@ -57,10 +57,38 @@ export interface IPSBTInputMetadata {
   derivationPath: string;
 }
 
+export interface IAssetTransferDisplayMetadata {
+  kind: "asset_transfer";
+  assetName: string;
+  assetAmount: string;
+  destinationAddress: string;
+  destinationCount?: number;
+  changeAddress?: string;
+  changeCount?: number;
+  inputAddresses?: string[];
+  feeAmount?: string;
+  baseCurrency?: string;
+}
+
+export type ISigningDisplayMetadata = IAssetTransferDisplayMetadata;
+
 export interface IBuildPSBTFromRawOptions {
   network: NetworkType;
   rawUnsignedTransaction: string;
   inputs: IPSBTInputMetadata[];
+  display?: ISigningDisplayMetadata;
+}
+
+export interface IBuildAssetTransferDisplayMetadataOptions {
+  assetName: string;
+  assetAmount: number | string;
+  destinationAddress: string;
+  destinationCount?: number;
+  changeAddress?: string;
+  changeCount?: number;
+  inputAddresses?: string[];
+  feeAmount?: number | string;
+  baseCurrency?: string;
 }
 
 // ─── Device responses ────────────────────────────────────────────────────────

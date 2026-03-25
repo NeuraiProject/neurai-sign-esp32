@@ -137,6 +137,11 @@ export class SerialConnection {
     // Send JSON in small chunks, then newline to trigger processing.
     // The ESP32 CDC serial buffer can lose data if sent too fast in one write.
     const json = JSON.stringify(command);
+    console.debug("[NeuraiESP32 Serial] Sending command", {
+      action: command.action,
+      payloadLength: json.length + 1,
+      timeoutMs,
+    });
     await this.writeChunked(json);
     await this.writer.ready;
     await this.writer.write("\n");
@@ -165,6 +170,11 @@ export class SerialConnection {
     this.responseQueue = [];
 
     const json = JSON.stringify(command);
+    console.debug("[NeuraiESP32 Serial] Sending command", {
+      action: command.action,
+      payloadLength: json.length + 1,
+      timeoutMs,
+    });
     await this.writeChunked(json);
     await this.writer.ready;
     await this.writer.write("\n");
@@ -212,12 +222,14 @@ export class SerialConnection {
           if (line.startsWith("{")) {
             try {
               const data = JSON.parse(line) as DeviceResponse;
+              console.debug("[NeuraiESP32 Serial] JSON line received", data);
               this.responseQueue.push(data);
             } catch {
-              // Not valid JSON — debug output from firmware, ignore
+              console.debug("[NeuraiESP32 Serial] Invalid JSON line", line);
             }
+          } else {
+            console.debug("[NeuraiESP32 Serial] Non-JSON serial line", line);
           }
-          // Non-JSON lines are firmware debug output, ignored
         }
       } catch {
         // Read error — connection may have been closed
@@ -231,8 +243,18 @@ export class SerialConnection {
       const startTime = Date.now();
       const check = () => {
         if (this.responseQueue.length > 0) {
-          resolve(this.responseQueue.shift()!);
+          const response = this.responseQueue.shift()!;
+          console.debug("[NeuraiESP32 Serial] Response dequeued", {
+            waitedMs: Date.now() - startTime,
+            pendingResponses: this.responseQueue.length,
+            status: response.status,
+          });
+          resolve(response);
         } else if (Date.now() - startTime > timeoutMs) {
+          console.error("[NeuraiESP32 Serial] Response timeout", {
+            timeoutMs,
+            queuedResponses: this.responseQueue.length,
+          });
           resolve(null);
         } else {
           setTimeout(check, 50);

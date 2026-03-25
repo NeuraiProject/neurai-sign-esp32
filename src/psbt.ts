@@ -330,20 +330,6 @@ function finalizeLegacyP2pkhInputs(psbt: bitcoin.Psbt) {
       throw new Error(`Missing prevout to finalize input #${index}`);
     }
 
-    const chunks = bitcoin.script.decompile(prevOut.script);
-    const isP2pkh =
-      !!chunks &&
-      chunks.length === 5 &&
-      chunks[0] === bitcoin.opcodes.OP_DUP &&
-      chunks[1] === bitcoin.opcodes.OP_HASH160 &&
-      Buffer.isBuffer(chunks[2]) &&
-      chunks[3] === bitcoin.opcodes.OP_EQUALVERIFY &&
-      chunks[4] === bitcoin.opcodes.OP_CHECKSIG;
-
-    if (!isP2pkh) {
-      throw new Error(`Unsupported script type for input #${index}`);
-    }
-
     psbt.finalizeInput(index, () => ({
       finalScriptSig: bitcoin.script.compile([
         partialSig.signature,

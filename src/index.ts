@@ -17,6 +17,9 @@ export {
   validatePSBT,
 } from "./psbt.js";
 
+// Display metadata helpers
+export { buildAssetTransferDisplayMetadata } from "./display.js";
+
 // Serial connection (for advanced use)
 export { SerialConnection } from "./serial.js";
 
@@ -35,7 +38,10 @@ export type {
   ITxOutput,
   IBuildPSBTOptions,
   IBuildPSBTFromRawOptions,
+  IBuildAssetTransferDisplayMetadataOptions,
   IPSBTInputMetadata,
+  IAssetTransferDisplayMetadata,
+  ISigningDisplayMetadata,
   IDeviceInfo,
   IAddressResponse,
   IBip32PubkeyResponse,
