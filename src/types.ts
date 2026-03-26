@@ -126,6 +126,16 @@ export interface ISignPsbtResponse {
   signed_inputs: number;
 }
 
+export interface ISignMessageResponse {
+  status: string;
+  /** Base64-encoded recoverable signature (65 bytes) */
+  signature: string;
+  /** Address that signed the message */
+  address: string;
+  /** The original message that was signed */
+  message: string;
+}
+
 export interface IErrorResponse {
   status: "error";
   message: string;
@@ -141,6 +151,7 @@ export type DeviceResponse =
   | IAddressResponse
   | IBip32PubkeyResponse
   | ISignPsbtResponse
+  | ISignMessageResponse
   | IErrorResponse
   | IProcessingResponse;
 

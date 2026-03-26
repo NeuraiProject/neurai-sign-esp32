@@ -18,6 +18,7 @@ This library supports:
 - XNA transfers
 - Asset transfers
 - BIP32 account discovery via `get_bip32_pubkey`
+- Message signing (prove address ownership)
 
 Asset transfers use the same PSBT signing flow as XNA transfers. The transaction
 outputs are still signed from the raw unsigned transaction, while optional
@@ -153,6 +154,23 @@ This metadata is especially useful for asset transfers because a standard PSBT
 does not expose high-level fields such as `assetName` or `assetAmount` in a
 simple, display-ready form.
 
+### Sign a message (prove address ownership)
+
+```javascript
+const device = new NeuraiESP32();
+await device.connect();
+
+// User must press Confirm on device
+const result = await device.signMessage("Hello, I own this address");
+console.log(result.signature); // base64-encoded recoverable signature
+console.log(result.address);   // address that signed the message
+console.log(result.message);   // the original message
+```
+
+The signature uses the standard Bitcoin message signing format with the
+`"Neurai Signed Message:\n"` prefix. It is compatible with
+`NeuraiMessage.verify()` from the Neurai addon.
+
 ### Get BIP32 extended public key
 
 ```javascript
@@ -223,6 +241,7 @@ using JSON messages. Supported commands:
 | `get_address` | Physical button | 30s |
 | `get_bip32_pubkey` | Physical button | 30s |
 | `sign_psbt` | Physical button + TX review | 60s |
+| `sign_message` | Physical button | 30s |
 
 ## API
 
@@ -239,6 +258,7 @@ Main class for device interaction.
 | `getBip32Pubkey()` | Get account xpub (requires confirmation) |
 | `signPsbt(base64)` | Sign a PSBT (requires confirmation) |
 | `signPsbt(base64, display?)` | Sign a PSBT and optionally send display metadata |
+| `signMessage(message)` | Sign a message to prove address ownership (requires confirmation) |
 | `signTransaction(opts)` | Build + sign + finalize in one call |
 
 ### `buildPSBT(options)`

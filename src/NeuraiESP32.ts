@@ -28,6 +28,7 @@ import type {
   IErrorResponse,
   ISerialOptions,
   ISigningDisplayMetadata,
+  ISignMessageResponse,
   ISignPsbtResponse,
   ISignResult,
   IUTXO,
@@ -125,6 +126,26 @@ export class NeuraiESP32 {
 
     this.assertSuccess(response);
     return response as IBip32PubkeyResponse;
+  }
+
+  /**
+   * Sign a message to prove address ownership.
+   * Requires user physical confirmation on the device (30s timeout).
+   *
+   * The signature is base64-encoded, compatible with Bitcoin/Neurai message
+   * signing (recoverable ECDSA with "Neurai Signed Message:\n" prefix).
+   *
+   * @param message - The message string to sign (max 1024 bytes)
+   * @returns Signature (base64), address, and the original message
+   */
+  async signMessage(message: string): Promise<ISignMessageResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "sign_message", message },
+      35000
+    );
+
+    this.assertSuccess(response);
+    return response as ISignMessageResponse;
   }
 
   /**

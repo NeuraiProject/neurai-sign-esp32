@@ -46,6 +46,7 @@ export type {
   IAddressResponse,
   IBip32PubkeyResponse,
   ISignPsbtResponse,
+  ISignMessageResponse,
   IErrorResponse,
   ISerialOptions,
   ISignResult,
