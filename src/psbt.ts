@@ -15,15 +15,22 @@ import { getNetwork } from "./networks.js";
 import type {
   IBuildPSBTFromRawOptions,
   IBuildPSBTOptions,
-  IPSBTInputMetadata,
   NetworkType,
 } from "./types.js";
 
-const DEFAULT_FEE_RATE = 1024; // sat/byte
-
+const DEFAULT_FEE_RATE = 1024;
 const TX_OVERHEAD = 10;
 const INPUT_SIZE = 148;
 const OUTPUT_SIZE = 34;
+
+type PsbtInput = bitcoin.Psbt['data']['inputs'][number];
+type PsbtCache = {
+  __TX?: bitcoin.Transaction;
+  __EXTRACTED_TX?: bitcoin.Transaction;
+  __FEE?: bigint;
+  __FEE_RATE?: number;
+  __NON_WITNESS_UTXO_TX_CACHE?: Record<number, bitcoin.Transaction>;
+};
 
 function estimateTxSize(inputCount: number, outputCount: number): number {
   return TX_OVERHEAD + inputCount * INPUT_SIZE + outputCount * OUTPUT_SIZE;
@@ -36,6 +43,43 @@ function parseMasterFingerprint(hex: string): Buffer {
     );
   }
   return Buffer.from(hex, "hex");
+}
+
+function getSignatureHashType(signature: Uint8Array): number {
+  return signature[signature.length - 1] ?? 1;
+}
+
+function checkPartialSigSighashes(input: PsbtInput) {
+  if (!input.sighashType || !input.partialSig) return;
+
+  let normalizedSighashType = input.sighashType;
+  input.partialSig.forEach((pSig) => {
+    const hashType = getSignatureHashType(pSig.signature);
+    if (normalizedSighashType !== hashType) {
+      console.warn("[NeuraiSignESP32] Adjusting input sighashType to match returned signature", {
+        previousSighashType: normalizedSighashType,
+        returnedHashType: hashType,
+      });
+      normalizedSighashType = hashType;
+    }
+  });
+  input.sighashType = normalizedSighashType;
+}
+
+function nonWitnessUtxoTxFromCache(cache: PsbtCache, input: PsbtInput, inputIndex: number) {
+  const existing = cache.__NON_WITNESS_UTXO_TX_CACHE?.[inputIndex];
+  if (existing) {
+    return existing;
+  }
+
+  if (!input.nonWitnessUtxo) {
+    throw new Error(`Missing nonWitnessUtxo for input #${inputIndex}`);
+  }
+
+  const tx = bitcoin.Transaction.fromBuffer(input.nonWitnessUtxo);
+  cache.__NON_WITNESS_UTXO_TX_CACHE ??= {};
+  cache.__NON_WITNESS_UTXO_TX_CACHE[inputIndex] = tx;
+  return tx;
 }
 
 export function buildPSBT(options: IBuildPSBTOptions): string {
@@ -122,19 +166,28 @@ export function buildPSBTFromRawTransaction(options: IBuildPSBTFromRawOptions): 
       throw new Error(`Missing input metadata for input #${index}`);
     }
 
-    psbt.addInput({
+    const inputData: Parameters<typeof psbt.addInput>[0] = {
       hash: metadata.txid,
       index: metadata.vout,
       sequence: metadata.sequence ?? input.sequence,
       nonWitnessUtxo: Buffer.from(metadata.rawTxHex, "hex"),
-      bip32Derivation: [
+    };
+
+    if (metadata.masterFingerprint && metadata.derivationPath && metadata.pubkey) {
+      inputData.bip32Derivation = [
         {
           masterFingerprint: parseMasterFingerprint(metadata.masterFingerprint),
           path: metadata.derivationPath,
           pubkey: Buffer.from(metadata.pubkey, "hex"),
         },
-      ],
-    });
+      ];
+    }
+
+    if (metadata.sighashType !== undefined) {
+      inputData.sighashType = metadata.sighashType;
+    }
+
+    psbt.addInput(inputData);
   }
 
   for (const output of tx.outs) {
@@ -155,9 +208,9 @@ export function finalizePSBT(
     network: getNetwork(network),
   });
 
-  psbt.finalizeAllInputs();
+  finalizeNeuraiP2pkhInputs(psbt, true);
 
-  const tx = psbt.extractTransaction();
+  const tx = extractFinalizableTransaction(psbt, true);
   return {
     txHex: tx.toHex(),
     txId: tx.getId(),
@@ -196,13 +249,10 @@ export function finalizeSignedPSBT(
     });
   }
 
-  try {
-    psbt.finalizeAllInputs();
-  } catch {
-    finalizeLegacyP2pkhInputs(psbt);
-  }
+  psbt.data.inputs.forEach((input) => checkPartialSigSighashes(input));
+  finalizeNeuraiP2pkhInputs(psbt, false);
 
-  const tx = psbt.extractTransaction(true);
+  const tx = extractFinalizableTransaction(psbt, false);
   return {
     txHex: tx.toHex(),
     txId: tx.getId(),
@@ -309,10 +359,13 @@ function readPsbtVarInt(buffer: Buffer, offset: number) {
   throw new Error("PSBT values larger than 32 bits are not supported");
 }
 
-function finalizeLegacyP2pkhInputs(psbt: bitcoin.Psbt) {
+function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean) {
+  let finalizedCount = 0;
+
   for (let index = 0; index < psbt.inputCount; index += 1) {
     const input = psbt.data.inputs[index];
     if (input.finalScriptSig || input.finalScriptWitness) {
+      finalizedCount += 1;
       continue;
     }
 
@@ -321,13 +374,19 @@ function finalizeLegacyP2pkhInputs(psbt: bitcoin.Psbt) {
     const txInput = psbt.txInputs[index];
 
     if (!partialSig || !nonWitnessUtxo || !txInput) {
-      throw new Error(`Missing data to finalize input #${index}`);
+      if (requireAllInputs) {
+        throw new Error(`Missing data to finalize input #${index}`);
+      }
+      continue;
     }
 
     const prevTx = bitcoin.Transaction.fromBuffer(nonWitnessUtxo);
     const prevOut = prevTx.outs[txInput.index];
     if (!prevOut) {
-      throw new Error(`Missing prevout to finalize input #${index}`);
+      if (requireAllInputs) {
+        throw new Error(`Missing prevout to finalize input #${index}`);
+      }
+      continue;
     }
 
     psbt.finalizeInput(index, () => ({
@@ -337,5 +396,89 @@ function finalizeLegacyP2pkhInputs(psbt: bitcoin.Psbt) {
       ]),
       finalScriptWitness: undefined,
     }));
+    finalizedCount += 1;
   }
+
+  if (requireAllInputs && finalizedCount !== psbt.inputCount) {
+    throw new Error(`Not all inputs were finalized (${finalizedCount}/${psbt.inputCount})`);
+  }
+}
+
+function extractFinalizableTransaction(
+  psbt: bitcoin.Psbt,
+  requireAllInputs: boolean
+): bitcoin.Transaction {
+  const cache = (psbt as any).__CACHE as PsbtCache | undefined;
+  const baseTx = cache?.__TX;
+  if (!baseTx || !cache) {
+    if (requireAllInputs) {
+      return psbt.extractTransaction(true);
+    }
+    return psbt.extractTransaction();
+  }
+
+  const tx = baseTx.clone();
+  inputFinalizeGetAmtsPartial(psbt.data.inputs, tx, cache, requireAllInputs);
+  return tx;
+}
+
+function inputFinalizeGetAmtsPartial(
+  inputs: PsbtInput[],
+  tx: bitcoin.Transaction,
+  cache: PsbtCache,
+  requireAllInputs: boolean
+) {
+  let inputAmount = 0n;
+
+  inputs.forEach((input, idx) => {
+    if (input.finalScriptSig) {
+      tx.ins[idx].script = input.finalScriptSig;
+    }
+    if (input.finalScriptWitness) {
+      tx.ins[idx].witness = scriptWitnessToWitnessStack(input.finalScriptWitness);
+    }
+    if (input.witnessUtxo) {
+      inputAmount += input.witnessUtxo.value;
+      return;
+    }
+    if (input.nonWitnessUtxo) {
+      const nwTx = nonWitnessUtxoTxFromCache(cache, input, idx);
+      const vout = tx.ins[idx].index;
+      const out = nwTx.outs[vout];
+      if (!out) {
+        if (requireAllInputs) {
+          throw new Error(`Missing prevout amount for input #${idx}`);
+        }
+        return;
+      }
+      inputAmount += out.value;
+      return;
+    }
+    if (requireAllInputs) {
+      throw new Error(`Missing UTXO data for input #${idx}`);
+    }
+  });
+
+  const outputAmount = tx.outs.reduce((total, o) => total + o.value, 0n);
+  const fee = inputAmount - outputAmount;
+  cache.__FEE = fee >= 0n ? fee : 0n;
+  cache.__EXTRACTED_TX = tx;
+  cache.__FEE_RATE = fee > 0n ? Math.floor(Number(fee / BigInt(tx.virtualSize()))) : 0;
+}
+
+function scriptWitnessToWitnessStack(finalScriptWitness: Uint8Array): Uint8Array[] {
+  const buffer = Buffer.from(finalScriptWitness);
+  let offset = 0;
+  const count = readPsbtVarInt(buffer, offset);
+  offset += count.size;
+  const stack: Uint8Array[] = [];
+
+  for (let i = 0; i < count.value; i += 1) {
+    const itemLen = readPsbtVarInt(buffer, offset);
+    offset += itemLen.size;
+    stack.push(buffer.subarray(offset, offset + itemLen.value));
+    offset += itemLen.value;
+  }
+
+  return stack;
 }

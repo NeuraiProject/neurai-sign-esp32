@@ -52,9 +52,10 @@ export interface IPSBTInputMetadata {
   vout: number;
   sequence?: number;
   rawTxHex: string;
-  pubkey: string;
-  masterFingerprint: string;
-  derivationPath: string;
+  pubkey?: string;
+  masterFingerprint?: string;
+  derivationPath?: string;
+  sighashType?: number;
 }
 
 export interface IAssetTransferDisplayMetadata {

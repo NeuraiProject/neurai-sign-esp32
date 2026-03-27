@@ -44,51 +44,27 @@ export class NeuraiESP32 {
     this.serial = new SerialConnection(options);
   }
 
-  /**
-   * Check if Web Serial API is supported in this browser.
-   */
   static isSupported(): boolean {
     return SerialConnection.isSupported();
   }
 
-  /**
-   * Whether the device is currently connected.
-   */
   get connected(): boolean {
     return this.serial.connected;
   }
 
-  /**
-   * Cached device info from the last getInfo() call.
-   */
   get info(): IDeviceInfo | null {
     return this.deviceInfo;
   }
 
-  // ─── Connection ─────────────────────────────────────────────────────────
-
-  /**
-   * Connect to the ESP32 hardware wallet.
-   * Opens the browser port selection dialog.
-   */
   async connect(): Promise<void> {
     await this.serial.open();
   }
 
-  /**
-   * Disconnect from the device.
-   */
   async disconnect(): Promise<void> {
     this.deviceInfo = null;
     await this.serial.close();
   }
 
-  // ─── Device commands ────────────────────────────────────────────────────
-
-  /**
-   * Get device information (no user confirmation needed).
-   * Returns device name, version, network, address, pubkey, etc.
-   */
   async getInfo(): Promise<IDeviceInfo> {
     const response = await this.serial.sendCommand(
       { action: "info" },
@@ -100,10 +76,6 @@ export class NeuraiESP32 {
     return this.deviceInfo;
   }
 
-  /**
-   * Request the device address and public key.
-   * Requires user physical confirmation on the device (30s timeout).
-   */
   async getAddress(): Promise<IAddressResponse> {
     const response = await this.serial.sendCommand(
       { action: "get_address" },
@@ -114,10 +86,6 @@ export class NeuraiESP32 {
     return response as IAddressResponse;
   }
 
-  /**
-   * Request the BIP32 account extended public key (xpub).
-   * Requires user physical confirmation on the device (30s timeout).
-   */
   async getBip32Pubkey(): Promise<IBip32PubkeyResponse> {
     const response = await this.serial.sendCommand(
       { action: "get_bip32_pubkey" },
@@ -128,16 +96,6 @@ export class NeuraiESP32 {
     return response as IBip32PubkeyResponse;
   }
 
-  /**
-   * Sign a message to prove address ownership.
-   * Requires user physical confirmation on the device (30s timeout).
-   *
-   * The signature is base64-encoded, compatible with Bitcoin/Neurai message
-   * signing (recoverable ECDSA with "Neurai Signed Message:\n" prefix).
-   *
-   * @param message - The message string to sign (max 1024 bytes)
-   * @returns Signature (base64), address, and the original message
-   */
   async signMessage(message: string): Promise<ISignMessageResponse> {
     const response = await this.serial.sendCommand(
       { action: "sign_message", message },
@@ -148,12 +106,6 @@ export class NeuraiESP32 {
     return response as ISignMessageResponse;
   }
 
-  /**
-   * Send a raw PSBT (base64) to the device for signing.
-   * Requires user physical confirmation on the device (60s timeout).
-   *
-   * Use this if you build the PSBT yourself.
-   */
   async signPsbt(
     psbtBase64: string,
     display?: ISigningDisplayMetadata
@@ -164,33 +116,13 @@ export class NeuraiESP32 {
         psbt: psbtBase64,
         ...(display ? { display } : {}),
       },
-      65000
+      120000
     );
 
     this.assertSuccess(response);
     return response as ISignPsbtResponse;
   }
 
-  // ─── High-level transaction flow ────────────────────────────────────────
-
-  /**
-   * Build, sign, and finalize a transaction in one call.
-   *
-   * This is the main method for sending XNA. It:
-   * 1. Builds an unsigned PSBT from the provided UTXOs and outputs
-   * 2. Sends it to the ESP32 for signing (user confirms on device)
-   * 3. Finalizes the signed PSBT and extracts the raw transaction
-   *
-   * @param options.network - Network type (default: uses device info)
-   * @param options.utxos - UTXOs to spend (must include rawTxHex)
-   * @param options.outputs - Destination outputs [{address, value}]
-   * @param options.changeAddress - Address for change (typically device address)
-   * @param options.pubkey - Compressed public key hex (from getAddress)
-   * @param options.masterFingerprint - From getInfo().master_fingerprint
-   * @param options.derivationPath - From getAddress().path
-   * @param options.feeRate - Fee rate in sat/byte (default: 1024)
-   * @returns ISignResult with txHex ready to broadcast
-   */
   async signTransaction(options: {
     network?: NetworkType;
     utxos: IUTXO[];
@@ -202,7 +134,6 @@ export class NeuraiESP32 {
     feeRate?: number;
     display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
-    // Use cached device info if available for defaults
     const info = this.deviceInfo;
 
     const network =
@@ -230,7 +161,6 @@ export class NeuraiESP32 {
       );
     }
 
-    // 1. Build unsigned PSBT
     const psbtBase64 = buildPSBT({
       network,
       utxos: options.utxos,
@@ -242,10 +172,8 @@ export class NeuraiESP32 {
       feeRate: options.feeRate,
     });
 
-    // 2. Send to ESP32 for signing
     const signResponse = await this.signPsbt(psbtBase64, options.display);
 
-    // 3. Finalize and extract raw transaction
     const { txHex, txId } = finalizeSignedPSBT(
       psbtBase64,
       signResponse.psbt,
@@ -260,8 +188,6 @@ export class NeuraiESP32 {
     };
   }
 
-  // ─── Private helpers ────────────────────────────────────────────────────
-
   private assertSuccess(response: DeviceResponse): void {
     if (response.status === "error") {
       throw new Error(
@@ -270,23 +196,15 @@ export class NeuraiESP32 {
     }
   }
 
-  /**
-   * Infer the NetworkType from cached device info.
-   */
   private inferNetworkType(info: IDeviceInfo | null): NetworkType {
     if (!info) {
-      return "xna"; // default
+      return "xna";
     }
 
-    const networkName = info.network?.toLowerCase() ?? "";
-    const coinType = info.coin_type;
-
-    if (networkName.includes("test")) {
-      return coinType === 1900 ? "xna-test" : "xna-legacy-test";
-    }
-    if (networkName.includes("legacy") || coinType === 0) {
-      return "xna-legacy";
-    }
+    const name = (info.network ?? "").toLowerCase();
+    if (name.includes("legacy") && name.includes("test")) return "xna-legacy-test";
+    if (name.includes("legacy")) return "xna-legacy";
+    if (name.includes("test")) return "xna-test";
     return "xna";
   }
 }

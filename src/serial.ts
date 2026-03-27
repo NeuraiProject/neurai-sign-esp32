@@ -7,15 +7,14 @@
 
 import type { DeviceResponse, ISerialOptions } from "./types.js";
 
-// Default USB filters for ESP32 devices
 const DEFAULT_FILTERS: SerialPortFilter[] = [
-  { usbVendorId: 0x303a, usbProductId: 0x1001 }, // ESP32-S3 USB JTAG/Serial
-  { usbVendorId: 0x303a },                         // Espressif generic
-  { usbVendorId: 0x10c4, usbProductId: 0xea60 },  // Silicon Labs CP210x
-  { usbVendorId: 0x1a86, usbProductId: 0x7523 },  // CH340
-  { usbVendorId: 0x0403, usbProductId: 0x6001 },  // FTDI FT232
-  { usbVendorId: 0x067b, usbProductId: 0x2303 },  // Prolific PL2303
-  { usbVendorId: 0x2886 },                         // Seeed Studio (XIAO)
+  { usbVendorId: 0x303a, usbProductId: 0x1001 },
+  { usbVendorId: 0x303a },
+  { usbVendorId: 0x10c4, usbProductId: 0xea60 },
+  { usbVendorId: 0x1a86, usbProductId: 0x7523 },
+  { usbVendorId: 0x0403, usbProductId: 0x6001 },
+  { usbVendorId: 0x067b, usbProductId: 0x2303 },
+  { usbVendorId: 0x2886 },
 ];
 
 const DEFAULT_BAUD_RATE = 115200;
@@ -36,22 +35,13 @@ export class SerialConnection {
     this.filters = options?.filters ?? DEFAULT_FILTERS;
   }
 
-  /**
-   * Check if Web Serial API is available.
-   */
   static isSupported(): boolean {
     return typeof navigator !== "undefined" && "serial" in navigator;
   }
 
-  /**
-   * Open a serial connection to the ESP32.
-   * Triggers browser port selection dialog.
-   */
   async open(): Promise<void> {
     if (!SerialConnection.isSupported()) {
-      throw new Error(
-        "Web Serial API not supported. Use Chrome, Edge, or Opera."
-      );
+      throw new Error("Web Serial API not supported. Use Chrome, Edge, or Opera.");
     }
 
     this.port = await navigator.serial.requestPort({ filters: this.filters });
@@ -64,28 +54,23 @@ export class SerialConnection {
       bufferSize: 8192,
     });
 
-    // Set up readable stream (text decoding)
     const decoder = new TextDecoderStream();
-    this.readableStreamClosed = this.port.readable!.pipeTo(decoder.writable as unknown as WritableStream<Uint8Array>);
+    this.readableStreamClosed = this.port.readable!.pipeTo(
+      decoder.writable as unknown as WritableStream<Uint8Array>
+    );
     this.reader = decoder.readable.getReader();
 
-    // Set up writable stream (text encoding)
     const encoder = new TextEncoderStream();
     this.writableStreamClosed = encoder.readable.pipeTo(this.port.writable!);
     this.writer = encoder.writable.getWriter();
 
-    // Start background read loop
     this.isReading = true;
     void this.readLoop();
 
-    // Give the ESP32 CDC port time to settle after connect/re-enumeration.
     await this.delay(1200);
     this.responseQueue = [];
   }
 
-  /**
-   * Close the serial connection.
-   */
   async close(): Promise<void> {
     this.isReading = false;
 
@@ -109,33 +94,17 @@ export class SerialConnection {
     this.responseQueue = [];
   }
 
-  /**
-   * Whether the serial port is currently connected.
-   */
   get connected(): boolean {
     return this.port !== null && this.writer !== null;
   }
 
-  /**
-   * Send a JSON command to the device and wait for a JSON response.
-   *
-   * @param command - The command object (e.g. { action: "info" })
-   * @param timeoutMs - Response timeout in milliseconds (default: 65000 for sign operations)
-   * @returns The parsed device response
-   */
-  async sendCommand(
-    command: Record<string, unknown>,
-    timeoutMs = 65000
-  ): Promise<DeviceResponse> {
+  async sendCommand(command: Record<string, unknown>, timeoutMs = 65000): Promise<DeviceResponse> {
     if (!this.writer) {
       throw new Error("Serial port not connected");
     }
 
-    // Clear stale responses
     this.responseQueue = [];
 
-    // Send JSON in small chunks, then newline to trigger processing.
-    // The ESP32 CDC serial buffer can lose data if sent too fast in one write.
     const json = JSON.stringify(command);
     console.debug("[NeuraiESP32 Serial] Sending command", {
       action: command.action,
@@ -146,7 +115,6 @@ export class SerialConnection {
     await this.writer.ready;
     await this.writer.write("\n");
 
-    // Wait for response
     const response = await this.waitForResponse(timeoutMs);
     if (!response) {
       throw new Error("Device response timeout");
@@ -155,14 +123,7 @@ export class SerialConnection {
     return response;
   }
 
-  /**
-   * Send a command and wait, skipping intermediate "processing" status messages.
-   * Useful for sign_psbt which sends a processing ACK before the actual response.
-   */
-  async sendCommandFinal(
-    command: Record<string, unknown>,
-    timeoutMs = 65000
-  ): Promise<DeviceResponse> {
+  async sendCommandFinal(command: Record<string, unknown>, timeoutMs = 65000): Promise<DeviceResponse> {
     if (!this.writer) {
       throw new Error("Serial port not connected");
     }
@@ -179,16 +140,12 @@ export class SerialConnection {
     await this.writer.ready;
     await this.writer.write("\n");
 
-    // Wait for a non-processing response
     const startTime = Date.now();
     while (Date.now() - startTime < timeoutMs) {
-      const response = await this.waitForResponse(
-        timeoutMs - (Date.now() - startTime)
-      );
+      const response = await this.waitForResponse(timeoutMs - (Date.now() - startTime));
       if (!response) {
         throw new Error("Device response timeout");
       }
-      // Skip intermediate "processing" status
       if (response.status === "processing") {
         continue;
       }
@@ -197,8 +154,6 @@ export class SerialConnection {
 
     throw new Error("Device response timeout");
   }
-
-  // ─── Private ──────────────────────────────────────────────────────────────
 
   private async readLoop(): Promise<void> {
     let buffer = "";
@@ -210,15 +165,13 @@ export class SerialConnection {
 
         buffer += value;
 
-        // Process complete lines
         const lines = buffer.split("\n");
-        buffer = lines.pop() ?? ""; // Keep incomplete line in buffer
+        buffer = lines.pop() ?? "";
 
         for (const rawLine of lines) {
           const line = rawLine.trim().replace(/\r/g, "");
           if (line.length === 0) continue;
 
-          // Try to parse as JSON response
           if (line.startsWith("{")) {
             try {
               const data = JSON.parse(line) as DeviceResponse;
@@ -232,7 +185,6 @@ export class SerialConnection {
           }
         }
       } catch {
-        // Read error — connection may have been closed
         break;
       }
     }
@@ -264,30 +216,62 @@ export class SerialConnection {
     });
   }
 
-  /**
-   * Write data in small chunks with pauses between them.
-   *
-   * The ESP32 CDC serial buffer can lose data when the host sends a large
-   * payload in a single write. Splitting into 32-byte chunks with a 4 ms
-   * pause gives the firmware time to drain its receive buffer.
-   */
-  private async writeChunked(
-    data: string,
-    chunkSize = 32,
-    pauseMs = 4
-  ): Promise<void> {
+  private async writeChunked(data: string, chunkSize = 256, pauseMs = 8): Promise<void> {
     if (!this.writer) {
       throw new Error("Serial port not connected");
     }
 
-    for (let offset = 0; offset < data.length; offset += chunkSize) {
+    const totalChunks = Math.ceil(data.length / chunkSize);
+    const startedAt = Date.now();
+    let totalReadyMs = 0;
+    let totalWriteMs = 0;
+    let totalPauseMs = 0;
+
+    console.debug("[NeuraiESP32 Serial][writeChunked] start", {
+      totalBytes: data.length,
+      chunkSize,
+      pauseMs,
+      totalChunks,
+    });
+
+    for (let offset = 0, chunkIndex = 0; offset < data.length; offset += chunkSize, chunkIndex += 1) {
       const chunk = data.slice(offset, offset + chunkSize);
+      const readyStartedAt = Date.now();
       await this.writer.ready;
+      const readyMs = Date.now() - readyStartedAt;
+      totalReadyMs += readyMs;
+
+      const writeStartedAt = Date.now();
       await this.writer.write(chunk);
-      if (offset + chunkSize < data.length) {
+      const writeMs = Date.now() - writeStartedAt;
+      totalWriteMs += writeMs;
+
+      let actualPauseMs = 0;
+      if (pauseMs > 0 && offset + chunkSize < data.length) {
+        const pauseStartedAt = Date.now();
         await this.delay(pauseMs);
+        actualPauseMs = Date.now() - pauseStartedAt;
+        totalPauseMs += actualPauseMs;
       }
+
+      console.debug("[NeuraiESP32 Serial][writeChunked] chunk", {
+        chunkIndex: chunkIndex + 1,
+        totalChunks,
+        chunkBytes: chunk.length,
+        readyMs,
+        writeMs,
+        pauseMs: actualPauseMs,
+      });
     }
+
+    console.debug("[NeuraiESP32 Serial][writeChunked] complete", {
+      totalBytes: data.length,
+      totalChunks,
+      totalMs: Date.now() - startedAt,
+      totalReadyMs,
+      totalWriteMs,
+      totalPauseMs,
+    });
   }
 
   private delay(ms: number): Promise<void> {
