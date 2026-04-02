@@ -202,9 +202,11 @@ export class NeuraiESP32 {
     }
 
     const name = (info.network ?? "").toLowerCase();
+    const derivationPath = (info.path ?? "").trim();
     if (name.includes("legacy") && name.includes("test")) return "xna-legacy-test";
     if (name.includes("legacy")) return "xna-legacy";
     if (name.includes("test")) return "xna-test";
+    if (info.coin_type === 1 || derivationPath.includes("/1'/")) return "xna-test";
     return "xna";
   }
 }
