@@ -31,6 +31,21 @@ asset name, transferred amount, destination address, and fee more clearly.
 npm i @neuraiproject/neurai-sign-esp32
 ```
 
+For browser-specific consumption you can also import the explicit browser entry:
+
+```javascript
+import { NeuraiESP32 } from "@neuraiproject/neurai-sign-esp32/browser";
+```
+
+For classic HTML pages without ESM imports, load the global bundle:
+
+```html
+<script src="./dist/NeuraiSignESP32.global.js"></script>
+<script>
+  const device = new window.NeuraiSignESP32.NeuraiESP32();
+</script>
+```
+
 ## How to use
 
 ### Full transaction flow
@@ -191,6 +206,30 @@ if (!NeuraiESP32.isSupported()) {
 }
 ```
 
+## Manual browser smoke test
+
+There is a minimal browser smoke harness at
+[`examples/browser-smoke.html`](/home/mark/src/AAA-experimento/neurai-sign-esp32/examples/browser-smoke.html)
+that imports the generated browser ESM bundle from `dist/browser.js`.
+
+Suggested flow:
+
+1. Run `npm run build`.
+2. Serve the repository root over HTTP, for example `python3 -m http.server 8000`.
+3. Open `http://localhost:8000/examples/browser-smoke.html` in Chrome or Edge.
+4. Confirm the startup checks render in the page.
+5. Click `Request Serial Port` and verify the port picker, `getInfo()` response and clean disconnect.
+
+## Build outputs
+
+After `npm run build`, the package publishes:
+
+- `dist/index.js`: primary ESM entry
+- `dist/index.cjs`: CommonJS entry
+- `dist/browser.js`: explicit browser ESM entry
+- `dist/NeuraiSignESP32.global.js`: IIFE bundle exposing `globalThis.NeuraiSignESP32`
+- `dist/index.d.ts`: public types
+
 ## UTXO requirements
 
 Each UTXO requires the `rawTxHex` field — the full raw hex of the previous
@@ -220,8 +259,7 @@ firmware's `Serial.read()` loop cannot drain the buffer fast enough if the
 host flushes several kilobytes at once.
 
 This library works around the problem by splitting every outgoing message into
-**32-byte chunks** with a **4 ms pause** between each one. This matches the
-approach used in the reference web wallet (`NeuraiHWSerial.writeChunked`).
+**256-byte chunks** with a **8 ms pause** between each one.
 
 The newline terminator (`\n`) is sent separately after all chunks, so the
 firmware only processes the command once the full JSON has arrived.
