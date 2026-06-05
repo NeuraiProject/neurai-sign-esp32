@@ -20,8 +20,10 @@ export {
 // Display metadata helpers
 export { buildAssetTransferDisplayMetadata } from "./display.js";
 
-// Serial connection (for advanced use)
+// Transport layer (for advanced use / custom platforms)
 export { SerialConnection } from "./serial.js";
+export { SerialProtocol } from "./serial-protocol.js";
+export { WebSerialByteChannel } from "./channels/web-serial.js";
 
 // Network configs
 export {
@@ -71,6 +73,8 @@ export type { IPQSighashOptions } from "./pq-sighash.js";
 
 // Types
 export type {
+  INeuraiTransport,
+  IByteChannel,
   IUTXO,
   IPQUTXO,
   ITxOutput,

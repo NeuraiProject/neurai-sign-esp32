@@ -63,6 +63,23 @@ export default [
     ],
   },
   {
+    input: "src/react-native.ts",
+    output: {
+      file: "dist/react-native.js",
+      format: "esm",
+      sourcemap: false,
+    },
+    plugins: [
+      resolve({
+        browser: false,
+        preferBuiltins: false,
+        extensions,
+      }),
+      commonjs(),
+      createTsPlugin(),
+    ],
+  },
+  {
     input: "src/global.ts",
     output: {
       file: "dist/NeuraiSignESP32.global.js",
@@ -84,6 +101,14 @@ export default [
     input: "src/index.ts",
     output: {
       file: "dist/index.d.ts",
+      format: "esm",
+    },
+    plugins: [dts()],
+  },
+  {
+    input: "src/react-native.ts",
+    output: {
+      file: "dist/react-native.d.ts",
       format: "esm",
     },
     plugins: [dts()],

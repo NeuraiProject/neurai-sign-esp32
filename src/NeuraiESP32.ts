@@ -33,6 +33,7 @@ import type {
   IBip32PubkeyResponse,
   IDeviceInfo,
   IErrorResponse,
+  INeuraiTransport,
   IPQUTXO,
   ISerialOptions,
   ISigningDisplayMetadata,
@@ -48,11 +49,16 @@ import type {
 } from "./types.js";
 
 export class NeuraiESP32 {
-  private serial: SerialConnection;
+  private serial: INeuraiTransport;
   private deviceInfo: IDeviceInfo | null = null;
 
+  /**
+   * @param options Pass `{ transport }` to drive the device over a custom
+   * transport (e.g. React Native / Android USB). Without it, the default Web
+   * Serial transport is used and `baudRate`/`filters` configure it.
+   */
   constructor(options?: ISerialOptions) {
-    this.serial = new SerialConnection(options);
+    this.serial = options?.transport ?? new SerialConnection(options);
   }
 
   static isSupported(): boolean {

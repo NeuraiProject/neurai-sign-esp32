@@ -1,6 +1,6 @@
 {
   "name": "@neuraiproject/neurai-sign-esp32",
-  "version": "0.5.0",
+  "version": "0.5.5",
   "description": "Create and sign PSBTs for Neurai via ESP32 hardware wallet",
   "type": "module",
   "main": "dist/index.cjs",
@@ -15,6 +15,10 @@
     "./browser": {
       "types": "./dist/index.d.ts",
       "import": "./dist/browser.js"
+    },
+    "./react-native": {
+      "types": "./dist/react-native.d.ts",
+      "import": "./dist/react-native.js"
     },
     "./global": "./dist/NeuraiSignESP32.global.js"
   },

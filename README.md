@@ -337,6 +337,80 @@ Suggested flow:
 > Serve from the repo root — serving only `examples/` leaves `../dist/browser.js`
 > unreachable and the page cannot load the library.
 
+## React Native / Android USB
+
+The same library drives a NeuraiHW device from a React Native app over USB-C on
+**Android** (iOS does not expose generic USB serial to apps). The device class
+talks to a small transport interface, so the only platform-specific part is
+moving raw bytes — all protocol logic (the 256-byte / 8 ms chunked writes, line
+buffering, JSON parsing, timeouts) is shared.
+
+The package does **not** depend on any native USB module. You adapt your chosen
+module (e.g. `react-native-usb-serialport-for-android`, `react-native-serialport`,
+or your own TurboModule) to the tiny `IUsbSerialDriver` interface and pass it in.
+
+```ts
+import {
+  createNeuraiESP32OverUsb,
+  bytesToBase64,
+  base64ToBytes,
+  type IUsbSerialDriver,
+} from "@neuraiproject/neurai-sign-esp32/react-native";
+
+// Adapt your native module here. This sketch assumes a module that exchanges
+// data as base64 strings (the common case on Android).
+const usbDriver: IUsbSerialDriver = {
+  async open({ baudRate }) {
+    const native = await MyUsbModule.open({ baudRate }); // your module
+    return {
+      write: (data) => native.send(bytesToBase64(data)),
+      onReceive: (handler) => {
+        const sub = native.onData((b64: string) => handler(base64ToBytes(b64)));
+        return { remove: () => sub.remove() };
+      },
+      close: () => native.close(),
+    };
+  },
+};
+
+const device = createNeuraiESP32OverUsb(usbDriver);
+await device.connect();
+const info = await device.getInfo();
+const { address } = await device.getAddress(); // user confirms on the device
+const result = await device.signTransaction({ utxos, outputs, changeAddress: address });
+console.log(result.txHex);
+await device.disconnect();
+```
+
+From here the API is identical to the browser flow (`getInfo`, `getAddress`,
+`signTransaction`, `signMessage`, `getBip32Pubkey`, PQ support…).
+
+### Building a custom transport
+
+`createNeuraiESP32OverUsb` is sugar over the same building blocks the Web Serial
+transport uses. To target any other platform, implement `IByteChannel` (four
+methods: `isOpen`, `onData`, `open`, `write`, `close`) and wrap it in a
+`SerialProtocol`:
+
+```ts
+import { NeuraiESP32, SerialProtocol, type IByteChannel } from "@neuraiproject/neurai-sign-esp32";
+
+class MyByteChannel implements IByteChannel { /* … */ }
+
+const device = new NeuraiESP32({ transport: new SerialProtocol(new MyByteChannel()) });
+```
+
+You do **not** need to replicate the chunked-write workaround in your channel —
+`SerialProtocol` handles it for every transport.
+
+### Android setup notes
+
+- Add `<uses-feature android:name="android.hardware.usb.host" />` to the app
+  manifest, and request runtime USB permission for the device.
+- The ESP32-S3 enumerates with USB vendor id `0x303a` (and CDC bridges such as
+  `0x10c4`, `0x1a86`, `0x0403`, `0x067b` for other boards).
+- Open the port at **115200** baud, 8-N-1.
+
 ## Build outputs
 
 After `npm run build`, the package publishes:
@@ -344,8 +418,9 @@ After `npm run build`, the package publishes:
 - `dist/index.js`: primary ESM entry
 - `dist/index.cjs`: CommonJS entry
 - `dist/browser.js`: explicit browser ESM entry
+- `dist/react-native.js`: React Native entry (no Web Serial; adds the USB transport)
 - `dist/NeuraiSignESP32.global.js`: IIFE bundle exposing `globalThis.NeuraiSignESP32`
-- `dist/index.d.ts`: public types
+- `dist/index.d.ts` / `dist/react-native.d.ts`: public types
 
 ## UTXO requirements
 
@@ -469,5 +544,9 @@ Check if a PSBT base64 string is parseable. Returns boolean.
 
 ## Browser support
 
-Requires Web Serial API: Chrome 89+, Edge 89+, Opera 75+.
-Firefox and Safari are not supported.
+The default transport requires the Web Serial API: Chrome 89+, Edge 89+,
+Opera 75+. Firefox and Safari are not supported.
+
+For non-browser platforms (React Native / Android USB, Node test doubles, …)
+inject a custom transport instead — see
+[React Native / Android USB](#react-native--android-usb).

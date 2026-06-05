@@ -194,6 +194,64 @@ export type DeviceResponse =
   | IErrorResponse
   | IProcessingResponse;
 
+// ─── Transport abstraction ───────────────────────────────────────────────────
+
+/**
+ * Message-level transport consumed by {@link NeuraiESP32}. This is the only
+ * surface the device class depends on, so any platform (Web Serial, React
+ * Native USB, a test double…) can drive a NeuraiHW device by implementing it.
+ *
+ * The default implementation, `SerialConnection`, speaks the NeuraiHW JSON
+ * protocol over the Web Serial API. `SerialProtocol` provides the same logic on
+ * top of a byte-level {@link IByteChannel}, so most platforms only need to
+ * implement the much smaller `IByteChannel`.
+ */
+export interface INeuraiTransport {
+  /** True while the underlying connection is open and writable. */
+  readonly connected: boolean;
+  /** Open the connection (may prompt the user to pick a port/device). */
+  open(): Promise<void>;
+  /** Close the connection and release resources. */
+  close(): Promise<void>;
+  /** Send a command and resolve with the first response. */
+  sendCommand(command: Record<string, unknown>, timeoutMs?: number): Promise<DeviceResponse>;
+  /** Like {@link sendCommand}, but skips `processing` heartbeats until a final response. */
+  sendCommandFinal(command: Record<string, unknown>, timeoutMs?: number): Promise<DeviceResponse>;
+  /** Like {@link sendCommandFinal}, but resets the timeout window on every heartbeat. */
+  sendCommandHeartbeat(
+    command: Record<string, unknown>,
+    perResponseTimeoutMs?: number,
+    maxTotalMs?: number
+  ): Promise<DeviceResponse>;
+}
+
+/**
+ * Byte-level, platform-specific channel to the device. Implement this to add a
+ * new transport (e.g. an Android USB-serial native module): everything above it
+ * — the chunked-write firmware workaround, line buffering, JSON parsing, the
+ * response queue and timeouts — is handled by {@link SerialProtocol} and shared
+ * across platforms.
+ *
+ * Implementations MUST deliver inbound bytes verbatim to the handler registered
+ * via {@link onData}; they MUST NOT assume message boundaries (the protocol
+ * layer reassembles newline-terminated JSON lines itself).
+ */
+export interface IByteChannel {
+  /** True while the channel is open. */
+  readonly isOpen: boolean;
+  /**
+   * Register the handler that receives inbound byte chunks. Called once, before
+   * {@link open}. Chunks may split or coalesce device messages arbitrarily.
+   */
+  onData(handler: (chunk: Uint8Array) => void): void;
+  /** Open the channel (may prompt the user). */
+  open(): Promise<void>;
+  /** Write a chunk of bytes to the device. */
+  write(data: Uint8Array): Promise<void>;
+  /** Close the channel and release resources. */
+  close(): Promise<void>;
+}
+
 // ─── Serial connection options ───────────────────────────────────────────────
 
 export interface ISerialOptions {
@@ -201,6 +259,14 @@ export interface ISerialOptions {
   baudRate?: number;
   /** USB vendor/product filters for port selection */
   filters?: SerialPortFilter[];
+  /**
+   * Pre-built transport to drive the device. When provided, it is used as-is
+   * and `baudRate`/`filters` are ignored (those configure the default Web Serial
+   * transport). Use this to run the library outside the browser — e.g. over an
+   * Android USB-serial channel in React Native. See `IByteChannel` /
+   * `SerialProtocol`.
+   */
+  transport?: INeuraiTransport;
 }
 
 // ─── Network type ────────────────────────────────────────────────────────────
