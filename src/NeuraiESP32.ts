@@ -286,11 +286,31 @@ export class NeuraiESP32 {
       feeRate: options.feeRate,
     });
 
+    return this.signPqRawTransaction({
+      txHex: rawTxHex,
+      inputs,
+      display: options.display,
+    });
+  }
+
+  /**
+   * Sign an already-built unsigned raw transaction via the `sign_tx` action.
+   * Use this when the host has its own transaction builder (e.g. the wallet
+   * already created the exact tx the user reviewed) and only needs the device's
+   * PQ signatures. `inputs` carries per-input metadata: the input index, the
+   * prevout `amount` (0 for asset-wrapped inputs) and optionally the prevout
+   * `script_pub_key` for verification.
+   */
+  async signPqRawTransaction(options: {
+    txHex: string;
+    inputs: { index: number; amount: number; script_pub_key?: string }[];
+    display?: ISigningDisplayMetadata;
+  }): Promise<ISignResult> {
     const response = await this.serial.sendCommandHeartbeat(
       {
         action: "sign_tx",
-        tx: rawTxHex,
-        inputs,
+        tx: options.txHex,
+        inputs: options.inputs,
         ...(options.display ? { display: options.display } : {}),
       },
       30000,
