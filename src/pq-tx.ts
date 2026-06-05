@@ -115,6 +115,43 @@ export function buildUnsignedPQTransaction(
   return { rawTxHex: tx.toHex(), inputs };
 }
 
+/** The decoded AuthScript witness stack of a signed PQ input. */
+export interface IPQWitness {
+  authType: number;
+  /** ML-DSA-44 signature (hashType byte stripped). */
+  signature: Buffer;
+  /** The trailing sighash flag byte. */
+  hashType: number;
+  /** Raw ML-DSA-44 public key (1312 B, the 0x05 prefix stripped). */
+  pubkey: Buffer;
+  /** witnessScript bytes (phase 1: OP_TRUE). */
+  witnessScript: Buffer;
+}
+
+/**
+ * Extract and decode the AuthScript witness stack of a signed PQ input:
+ *   [authType] [sig||hashType] [0x05||pubkey] [witnessScript]
+ */
+export function extractPQWitness(
+  signedTxHex: string,
+  inputIndex = 0
+): IPQWitness {
+  const tx = bitcoin.Transaction.fromHex(signedTxHex);
+  const w = tx.ins[inputIndex]?.witness;
+  if (!w || w.length < 4) {
+    throw new Error(`Input #${inputIndex} has no AuthScript witness`);
+  }
+  const sigWithType = Buffer.from(w[1]);
+  const serPub = Buffer.from(w[2]);
+  return {
+    authType: w[0][0],
+    signature: Buffer.from(sigWithType.subarray(0, sigWithType.length - 1)),
+    hashType: sigWithType[sigWithType.length - 1],
+    pubkey: Buffer.from(serPub.subarray(1)), // strip 0x05 prefix
+    witnessScript: Buffer.from(w[3]),
+  };
+}
+
 /**
  * Parse the fully-signed transaction the device returns and compute its id.
  * The device is authoritative over the signed bytes (WYSIWYS); the host parses

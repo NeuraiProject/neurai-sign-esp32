@@ -33,7 +33,9 @@ import {
   MAX_PQ_INPUTS,
   buildUnsignedPQTransaction,
   parseSignedPQTransaction,
+  extractPQWitness,
 } from "./pq-tx.js";
+import { pqAuthScriptSighash } from "./pq-sighash.js";
 import { SerialConnection } from "./serial.js";
 
 const api = {
@@ -66,6 +68,8 @@ const api = {
   // PQ raw-transaction builder
   buildUnsignedPQTransaction,
   parseSignedPQTransaction,
+  extractPQWitness,
+  pqAuthScriptSighash,
   MAX_PQ_INPUTS,
   MAX_OUTPUTS,
 };

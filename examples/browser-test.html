@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>neurai-sign-esp32 browser smoke test</title>
+    <title>NeuraiHW PQ · Post-Quantum address reader & signing test (Testnet)</title>
     <style>
       :root {
         color-scheme: light;
@@ -11,67 +11,366 @@
         background: #f4f1e8;
         color: #1d1b19;
       }
-
-      body {
-        margin: 0;
-        padding: 24px;
-      }
-
-      main {
-        max-width: 900px;
-        margin: 0 auto;
-        display: grid;
-        gap: 16px;
-      }
-
+      body { margin: 0; padding: 24px; }
+      main { max-width: 920px; margin: 0 auto; display: grid; gap: 16px; }
       .panel {
         background: #fffdf8;
         border: 1px solid #d7cfbf;
         border-radius: 12px;
-        padding: 16px;
+        padding: 16px 18px;
       }
-
+      h1 { font-size: 1.3rem; margin: 0 0 6px; }
+      h2 { font-size: 1rem; margin: 0 0 10px; }
+      p { margin: 6px 0; line-height: 1.45; }
       button {
         font: inherit;
-        padding: 10px 14px;
+        padding: 10px 16px;
         border-radius: 999px;
         border: 1px solid #1d1b19;
         background: #1d1b19;
         color: #fffdf8;
         cursor: pointer;
       }
-
+      button:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.secondary { background: transparent; color: #1d1b19; }
+      .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+      .grid { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; }
+      .grid dt { color: #6b6256; }
+      .grid dd { margin: 0; word-break: break-all; }
+      .addr {
+        font-size: 1.05rem;
+        font-weight: 700;
+        background: #eef6ef;
+        border: 1px solid #bcdcc0;
+        border-radius: 8px;
+        padding: 10px 12px;
+        word-break: break-all;
+      }
+      .badge {
+        display: inline-block;
+        font-size: 0.78rem;
+        padding: 2px 8px;
+        border-radius: 999px;
+        border: 1px solid #5a7d8c;
+        color: #2c4d5a;
+        background: #e7f0f4;
+      }
+      .muted { color: #6b6256; }
       pre {
         margin: 0;
         white-space: pre-wrap;
         word-break: break-word;
+        font-size: 0.82rem;
+        max-height: 240px;
+        overflow: auto;
       }
-
-      code {
-        font: inherit;
-      }
+      code { font: inherit; }
+      .ok { color: #1f7a3d; }
+      .err { color: #b3261e; }
     </style>
   </head>
   <body>
     <main>
       <section class="panel">
-        <h1>Browser Smoke Test</h1>
-        <p>
-          This page imports <code>../dist/browser.js</code> directly and checks that the
-          browser-facing API loads, pure helpers behave as expected, and Web Serial can be
-          invoked from a user gesture.
+        <h1>NeuraiHW · Post-Quantum address (Testnet)</h1>
+        <p class="muted">
+          Reads device info over Web Serial using
+          <code>../dist/browser.js</code>. The device exposes only its ML-DSA-44
+          public key; <strong>this page derives the <code>tnq1…</code>
+          address</strong> from that pubkey and the mode declared in
+          <code>info</code> (<code>key_type=pq</code>, <code>network=NeuraiTest</code>).
+        </p>
+        <p class="muted">
+          Requires a browser with Web Serial (Chrome/Edge/Opera) and serving this
+          folder over HTTP (e.g. <code>npx serve .</code> from the repo root), not
+          opening it via <code>file://</code>.
         </p>
       </section>
 
       <section class="panel">
-        <button id="connect-button" type="button">Request Serial Port</button>
+        <div class="row">
+          <button id="connect" type="button">Connect ESP32 and read PQ address</button>
+          <button id="disconnect" type="button" class="secondary" disabled>Disconnect</button>
+          <span id="support" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="panel" id="result" hidden>
+        <h2>Device PQ address</h2>
+        <div id="address" class="addr">—</div>
+        <p id="address-note" class="muted"></p>
+        <dl class="grid" id="details"></dl>
+      </section>
+
+      <section class="panel" id="sign-panel" hidden>
+        <h2>PQ signing test (ML-DSA-44)</h2>
+        <p class="muted">
+          Builds a test transaction with a <strong>fictitious UTXO</strong> on your
+          own address (nothing is broadcast), signs it on the device with
+          <code>sign_tx</code>, and <strong>verifies the ML-DSA signature</strong>
+          against the AuthScript sighash recomputed on the host.
+        </p>
+        <div class="row">
+          <button id="sign-test" type="button" disabled>Sign test transaction</button>
+        </div>
+        <div id="verdict" class="addr" hidden>—</div>
+        <dl class="grid" id="sign-details"></dl>
       </section>
 
       <section class="panel">
+        <h2>Log</h2>
         <pre id="log"></pre>
       </section>
     </main>
 
-    <script type="module" src="./browser-smoke.js"></script>
+    <script type="module">
+      const $ = (id) => document.getElementById(id);
+      const logEl = $("log");
+      const connectBtn = $("connect");
+      const disconnectBtn = $("disconnect");
+
+      function log(title, value, cls) {
+        const rendered =
+          typeof value === "string" ? value : JSON.stringify(value, null, 2);
+        const line = document.createElement("span");
+        if (cls) line.className = cls;
+        line.textContent = `[${title}] ${rendered}\n`;
+        logEl.appendChild(line);
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      function short(hex, head = 16, tail = 8) {
+        if (!hex || hex.length <= head + tail + 1) return hex ?? "";
+        return `${hex.slice(0, head)}…${hex.slice(-tail)} (${hex.length / 2} bytes)`;
+      }
+
+      function renderDetails(rows) {
+        const dl = $("details");
+        dl.innerHTML = "";
+        for (const [k, v] of rows) {
+          const dt = document.createElement("dt");
+          dt.textContent = k;
+          const dd = document.createElement("dd");
+          dd.textContent = v;
+          dl.append(dt, dd);
+        }
+      }
+
+      // Load the library with a dynamic import so a load failure is shown on the
+      // page instead of silently aborting the whole module (which leaves the
+      // button unresponsive). dist/ lives at the repo root, so SERVE THE REPO
+      // ROOT (e.g. `npx serve .`) and open /examples/browser-test.html.
+      let lib = null;
+      const libReady = (async () => {
+        try {
+          lib = await import("../dist/browser.js");
+          log("module", "../dist/browser.js loaded ✓", "ok");
+          $("support").textContent = lib.NeuraiESP32.isSupported()
+            ? "Web Serial available ✓"
+            : "Web Serial NOT available (use Chrome/Edge/Opera) ✗";
+        } catch (error) {
+          log(
+            "module",
+            "Could not load ../dist/browser.js. Serve the REPO ROOT " +
+              "(e.g. `npx serve .`) and open /examples/browser-test.html. " +
+              "Detail: " + (error?.message ?? error),
+            "err"
+          );
+        }
+      })();
+
+      let device = null;
+      let lastAddr = null;
+
+      // 1 XNA as a fictitious prevout value (test only — nothing is broadcast).
+      const TEST_AMOUNT = 100_000_000;
+
+      connectBtn.addEventListener("click", async () => {
+        await libReady;
+        if (!lib) {
+          log("error", "Library not loaded (see the [module] message above).", "err");
+          return;
+        }
+        const { NeuraiESP32, decodeAddress, isPQAddress } = lib;
+        connectBtn.disabled = true;
+        device = new NeuraiESP32();
+        try {
+          await device.connect();
+          disconnectBtn.disabled = false;
+          log("connection", "port opened", "ok");
+
+          // 1) info → mode declared by the device
+          const info = await device.getInfo();
+          log("info", info);
+          if (info.key_type !== "pq") {
+            log(
+              "warning",
+              `Device reports key_type="${info.key_type ?? "legacy"}". ` +
+                "This example expects a PQ firmware (key_type=pq).",
+              "err"
+            );
+          }
+
+          // 2) get_address → the device returns only the pubkey; the library
+          //    derives the tnq1… address from (network, key_type).
+          log("action", "confirm on the device to reveal the address…");
+          const addr = await device.getAddress();
+          log("get_address", {
+            ...addr,
+            pubkey: short(addr.pubkey),
+          });
+
+          // 3) Show the result
+          $("result").hidden = false;
+          $("address").textContent = addr.address;
+
+          const isPQ = isPQAddress(addr.address);
+          $("address-note").innerHTML = isPQ
+            ? '<span class="badge">PQ AuthScript · witness v1</span> ' +
+              '<span class="ok">address derived on the host from the pubkey</span>'
+            : '<span class="badge">Legacy P2PKH</span>';
+
+          let commitment = addr.commitment ?? "";
+          try {
+            const decoded = decodeAddress(addr.address);
+            if (decoded.type === "pq") {
+              commitment = decoded.commitment.toString("hex");
+            }
+          } catch {
+            /* ignore */
+          }
+
+          renderDetails([
+            ["Type", addr.type ?? (isPQ ? "pq" : "legacy")],
+            ["Network", info.network ?? "—"],
+            ["Path", addr.path ?? "—"],
+            ["authType", String(addr.authType ?? "—")],
+            ["witnessScript", addr.witnessScript ?? "—"],
+            ["commitment", commitment || "—"],
+            ["pubkey (ML-DSA-44)", short(addr.pubkey)],
+            ["fingerprint", info.master_fingerprint ?? "—"],
+            ["firmware", `${info.device ?? "?"} v${info.version ?? "?"}`],
+          ]);
+
+          log("ok", "PQ address read and derived successfully", "ok");
+
+          // Enable the signing test (PQ mode only).
+          if (isPQ) {
+            lastAddr = addr;
+            $("sign-panel").hidden = false;
+            $("sign-test").disabled = false;
+          }
+        } catch (error) {
+          log("error", error instanceof Error ? error.message : String(error), "err");
+        } finally {
+          connectBtn.disabled = false;
+        }
+      });
+
+      $("sign-test").addEventListener("click", async () => {
+        if (!device || !lastAddr) {
+          log("error", "Connect and read the address first.", "err");
+          return;
+        }
+        const { encodeDestinationScript, extractPQWitness, pqAuthScriptSighash } = lib;
+        const btn = $("sign-test");
+        btn.disabled = true;
+        try {
+          const scriptPubKey = encodeDestinationScript(lastAddr.address).toString("hex");
+          const utxo = {
+            txid: "11".repeat(32),
+            vout: 0,
+            satoshis: TEST_AMOUNT,
+            scriptPubKey,
+            type: "pq",
+          };
+          log("sign", "test tx with a fictitious UTXO on your address. Confirm SIGNING on the device…");
+
+          const result = await device.signPqTransaction({
+            utxos: [utxo],
+            outputs: [{ address: lastAddr.address, value: Math.floor(TEST_AMOUNT / 2) }],
+            feeRate: 1,
+          });
+          log("sign_tx", {
+            txid: result.txId,
+            signed_inputs: result.signedInputs,
+            txHex: short(result.txHex, 24, 12),
+          });
+
+          // Extract the AuthScript witness and recompute the sighash on the host.
+          const w = extractPQWitness(result.txHex, 0);
+          const sighash = pqAuthScriptSighash({
+            tx: result.txHex,
+            inputIndex: 0,
+            amount: TEST_AMOUNT,
+            witnessScript: "51",
+            authType: 1,
+          });
+
+          // Verify the ML-DSA-44 signature with @noble/post-quantum (from CDN).
+          let verdict, verdictCls;
+          try {
+            const { ml_dsa44 } = await import(
+              "https://esm.sh/@noble/post-quantum@0.6.0/ml-dsa.js"
+            );
+            const ok = ml_dsa44.verify(
+              Uint8Array.from(w.signature),
+              Uint8Array.from(sighash),
+              Uint8Array.from(w.pubkey)
+            );
+            verdict = ok
+              ? "✓ ML-DSA-44 signature VALID against the AuthScript sighash"
+              : "✗ Signature INVALID (check sighash/context)";
+            verdictCls = ok ? "ok" : "err";
+            log("verify", verdict, verdictCls);
+          } catch (e) {
+            verdict = "Signature obtained; could not verify (no network for @noble): " + (e?.message ?? e);
+            verdictCls = "muted";
+            log("verify", verdict, "err");
+          }
+
+          const vEl = $("verdict");
+          vEl.hidden = false;
+          vEl.textContent = verdict;
+          vEl.className = "addr " + (verdictCls === "ok" ? "ok" : verdictCls === "err" ? "err" : "muted");
+
+          const dl = $("sign-details");
+          dl.innerHTML = "";
+          for (const [k, v] of [
+            ["txid", result.txId],
+            ["signed inputs", String(result.signedInputs)],
+            ["authType (witness[0])", String(w.authType)],
+            ["ML-DSA signature", `${w.signature.length} bytes`],
+            ["hashType", String(w.hashType)],
+            ["pubkey (witness[2])", `${w.pubkey.length} bytes`],
+            ["witnessScript", w.witnessScript.toString("hex")],
+            ["sighash (host)", sighash.toString("hex")],
+            ["signed tx", `${result.txHex.length / 2} bytes`],
+          ]) {
+            const dt = document.createElement("dt");
+            dt.textContent = k;
+            const dd = document.createElement("dd");
+            dd.textContent = v;
+            dl.append(dt, dd);
+          }
+        } catch (error) {
+          log("error", error instanceof Error ? error.message : String(error), "err");
+        } finally {
+          btn.disabled = false;
+        }
+      });
+
+      disconnectBtn.addEventListener("click", async () => {
+        try {
+          await device?.disconnect();
+          log("connection", "port closed");
+        } catch (error) {
+          log("error", error instanceof Error ? error.message : String(error), "err");
+        } finally {
+          disconnectBtn.disabled = true;
+          device = null;
+        }
+      });
+    </script>
   </body>
-  </html>
+</html>

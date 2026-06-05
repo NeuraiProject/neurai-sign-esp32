@@ -54,6 +54,7 @@ export type { DecodedAddress } from "./pq-address.js";
 export {
   buildUnsignedPQTransaction,
   parseSignedPQTransaction,
+  extractPQWitness,
   MAX_PQ_INPUTS,
   MAX_OUTPUTS,
 } from "./pq-tx.js";
@@ -61,7 +62,12 @@ export type {
   IPQSignInput,
   IBuildUnsignedPQTxOptions,
   IUnsignedPQTx,
+  IPQWitness,
 } from "./pq-tx.js";
+
+// PQ AuthScript sighash (for verifying device signatures)
+export { pqAuthScriptSighash, SIGHASH_ALL, PQ_AUTH_TYPE } from "./pq-sighash.js";
+export type { IPQSighashOptions } from "./pq-sighash.js";
 
 // Types
 export type {

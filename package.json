@@ -53,6 +53,7 @@
     "varuint-bitcoin": "2.0.0"
   },
   "devDependencies": {
+    "@noble/post-quantum": "^0.6.1",
     "@rollup/plugin-commonjs": "^28.0.6",
     "@rollup/plugin-node-resolve": "^16.0.1",
     "@rollup/plugin-typescript": "^12.1.4",

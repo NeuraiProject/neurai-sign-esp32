@@ -2,13 +2,18 @@
 
 Create and sign Neurai (XNA) and asset transactions via ESP32 hardware wallet.
 
-This library handles the full PSBT workflow against a NeuraiHW device:
+This library handles the full PSBT workflow against an ESP32 hardware wallet:
 build an unsigned PSBT, send it over USB Serial for signing, receive
 the signed PSBT back, finalize it, and extract the raw transaction hex
 ready for broadcast.
 
 Uses [bitcoinjs-lib](https://www.npmjs.com/package/bitcoinjs-lib) v7 for
 PSBT construction and the Web Serial API for device communication.
+
+It also supports **Post-Quantum (ML-DSA-44 / AuthScript) addresses**: sending to
+PQ addresses (`nq1…`/`tnq1…`) and spending from them. The library auto-detects
+the device mode from `info` and routes accordingly — see
+[Post-Quantum support](#post-quantum-pq--ml-dsa-44-support).
 
 ##
 
@@ -19,6 +24,7 @@ This library supports:
 - Asset transfers
 - BIP32 account discovery via `get_bip32_pubkey`
 - Message signing (prove address ownership)
+- **Post-Quantum addresses (ML-DSA-44 / AuthScript)** — send to and spend from `nq1…`/`tnq1…`
 
 Asset transfers use the same PSBT signing flow as XNA transfers. The transaction
 outputs are still signed from the raw unsigned transaction, while optional
@@ -196,6 +202,109 @@ console.log(bip32.master_fingerprint); // "a1b2c3d4"
 console.log(bip32.path);              // "m/44'/1900'/0'"
 ```
 
+## Post-Quantum (PQ / ML-DSA-44) support
+
+The device operates in one mode at a time, declared via `info` on two
+orthogonal axes:
+
+- **network**: `mainnet` / `testnet`
+- **key_type**: `legacy` (ECDSA/secp256k1 P2PKH) / `pq` (ML-DSA-44 AuthScript)
+
+The library reads `info.key_type` and routes automatically — the same
+`getAddress()` / `signTransaction()` calls work in both modes. PQ uses the
+AuthScript witness-v1 format (`nq1…` mainnet / `tnq1…` testnet), which cannot be
+represented in a PSBT, so spending from PQ uses a raw-transaction transport
+(`sign_tx`) under the hood. See [`docs/pq-protocol-design.md`](./docs/pq-protocol-design.md).
+
+> The device exposes **only the public key** of its single address; the library
+> derives the `nq1…`/`tnq1…` address from that pubkey + mode.
+
+### Read a PQ address
+
+```javascript
+const device = new NeuraiESP32();
+await device.connect();
+
+const info = await device.getInfo();
+console.log(info.key_type); // "pq"
+console.log(info.network);  // "NeuraiTest"
+
+// In PQ mode the device returns only the pubkey; the library derives the address.
+const addr = await device.getAddress(); // requires confirmation on device
+console.log(addr.type);       // "pq"
+console.log(addr.address);    // "tnq1..."
+console.log(addr.commitment); // 32-byte AuthScript commitment (hex)
+```
+
+### Send to a PQ address (from a legacy ECDSA wallet)
+
+No special handling is needed: pass a `nq1…`/`tnq1…` destination to
+`signTransaction`/`buildPSBT`. The library encodes the AuthScript output script
+automatically; the ECDSA inputs are still signed via `sign_psbt`.
+
+```javascript
+const result = await device.signTransaction({
+  utxos: [/* legacy P2PKH UTXOs with rawTxHex */],
+  outputs: [{ address: "tnq1...", value: 100000000 }], // PQ destination
+  changeAddress: address,
+});
+```
+
+### Spend from a PQ address
+
+When the device is in PQ mode, `signTransaction` routes to the PQ path
+(`signPqTransaction`): it builds an unsigned raw transaction, sends it with
+per-input metadata via `sign_tx`, and returns the fully-signed transaction.
+Change defaults to the device's own single address.
+
+```javascript
+const result = await device.signTransaction({
+  utxos: [
+    {
+      txid: "abcd1234....",
+      vout: 0,
+      satoshis: 100000000,
+      scriptPubKey: "5120<32-byte commitment>", // the PQ address script
+      type: "pq",
+      // sighashAmount: 0,  // use 0 for asset-wrapped inputs
+    },
+  ],
+  outputs: [{ address: "tnq1...", value: 50000000 }],
+  // changeAddress defaults to the device's PQ address
+});
+
+console.log(result.txHex); // signed raw tx, ready to broadcast via the node RPC
+console.log(result.txId);
+```
+
+### Verify a device signature (optional)
+
+You can independently verify the ML-DSA-44 signature the device produced by
+recomputing the AuthScript sighash and checking it against the pubkey (using
+`@noble/post-quantum`, which is not a runtime dependency of this library):
+
+```javascript
+import {
+  extractPQWitness,
+  pqAuthScriptSighash,
+} from "@neuraiproject/neurai-sign-esp32";
+import { ml_dsa44 } from "@noble/post-quantum/ml-dsa.js";
+
+const w = extractPQWitness(result.txHex, 0);
+const sighash = pqAuthScriptSighash({
+  tx: result.txHex,
+  inputIndex: 0,
+  amount: 100000000,      // the prevout amount used for that input
+  witnessScript: "51",    // OP_TRUE (phase 1)
+  authType: 1,
+});
+const ok = ml_dsa44.verify(w.signature, sighash, w.pubkey); // verify(sig, msg, pub)
+```
+
+[`examples/browser-test.html`](./examples/browser-test.html) demonstrates this
+full flow end-to-end (read PQ address → sign a test transaction → verify the
+ML-DSA-44 signature).
+
 ### Check Web Serial API support
 
 ```javascript
@@ -208,17 +317,25 @@ if (!NeuraiESP32.isSupported()) {
 
 ## Manual browser smoke test
 
-There is a minimal browser smoke harness at
-[`examples/browser-smoke.html`](/home/mark/src/AAA-experimento/neurai-sign-esp32/examples/browser-smoke.html)
-that imports the generated browser ESM bundle from `dist/browser.js`.
+There is a browser demo at
+[`examples/browser-test.html`](./examples/browser-test.html) that imports the
+generated browser ESM bundle from `dist/browser.js`. It reads a PQ address from
+the device and (in PQ mode) signs a test transaction and verifies the ML-DSA-44
+signature.
 
 Suggested flow:
 
 1. Run `npm run build`.
-2. Serve the repository root over HTTP, for example `python3 -m http.server 8000`.
-3. Open `http://localhost:8000/examples/browser-smoke.html` in Chrome or Edge.
-4. Confirm the startup checks render in the page.
-5. Click `Request Serial Port` and verify the port picker, `getInfo()` response and clean disconnect.
+2. Serve the **repository root** over HTTP (so `dist/` is reachable), for example
+   `npx serve .` or `python3 -m http.server 8000`.
+3. Open `http://localhost:8000/examples/browser-test.html` in Chrome or Edge.
+4. Click `Conectar`, pick the port, and confirm on the device. The page shows the
+   derived `tnq1…` address.
+5. Click `Firmar transacción de prueba` and confirm on the device. The page signs
+   a fictitious transaction and shows `✓ Firma ML-DSA-44 VÁLIDA`.
+
+> Serve from the repo root — serving only `examples/` leaves `../dist/browser.js`
+> unreachable and the page cannot load the library.
 
 ## Build outputs
 
@@ -242,14 +359,20 @@ const rawTxHex = await rpc("getrawtransaction", [txid]);
 
 ## Networks
 
-Supported network types:
+The public model has two orthogonal axes: **network** (`mainnet`/`testnet`) and
+**key_type** (`legacy`/`pq`). The device declares both via `info`. Internally
+these resolve to a `NetworkType` identifier:
 
-| Network | Coin type | Address prefix |
-|---|---|---|
-| `xna` | 1900 | N (mainnet, recommended) |
-| `xna-test` | 1 | testnet |
-| `xna-legacy` | 0 | N (legacy mainnet) |
-| `xna-legacy-test` | 1 | testnet legacy |
+| network | key_type | Internal `NetworkType` | Coin type | Address prefix |
+|---|---|---|---|---|
+| mainnet | legacy | `xna` | 1900 | `N…` (P2PKH) |
+| testnet | legacy | `xna-test` | 1 | testnet P2PKH |
+| mainnet | pq | `xna-pq` | 1900 | `nq1…` (AuthScript) |
+| testnet | pq | `xna-pq-test` | 1 | `tnq1…` (AuthScript) |
+
+`xna-legacy` / `xna-legacy-test` (coin type 0) remain available for the legacy
+coin-type-0 derivation and are unrelated to `key_type: "legacy"`. Use
+`resolveNetwork(network, keyType)` to map the two axes to a `NetworkType`.
 
 ## Chunked serial writes (important)
 
@@ -270,7 +393,7 @@ payloads) will fail silently or produce corrupted data on the device.
 
 ## Device protocol
 
-The library communicates with NeuraiHW firmware over USB Serial (115200 baud)
+The library communicates with the ESP32 firmware over USB Serial (115200 baud)
 using JSON messages. Supported commands:
 
 | Command | Confirmation | Timeout |
@@ -279,7 +402,12 @@ using JSON messages. Supported commands:
 | `get_address` | Physical button | 30s |
 | `get_bip32_pubkey` | Physical button | 30s |
 | `sign_psbt` | Physical button + TX review | 60s |
+| `sign_tx` (PQ) | Physical button + TX review | per-heartbeat (ML-DSA is slow) |
 | `sign_message` | Physical button | 30s |
+
+`info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
+returns only the public key (the library derives the address) and signing uses
+`sign_tx` (raw transaction) instead of `sign_psbt`.
 
 ## API
 
@@ -291,13 +419,27 @@ Main class for device interaction.
 |---|---|
 | `connect()` | Open USB Serial connection (browser dialog) |
 | `disconnect()` | Close connection |
-| `getInfo()` | Get device info (no confirmation) |
-| `getAddress()` | Get address + pubkey (requires confirmation) |
+| `getInfo()` | Get device info incl. `key_type` (no confirmation) |
+| `getAddress()` | Get address + pubkey (requires confirmation); derives the address from the pubkey + mode (legacy or PQ) |
 | `getBip32Pubkey()` | Get account xpub (requires confirmation) |
 | `signPsbt(base64)` | Sign a PSBT (requires confirmation) |
 | `signPsbt(base64, display?)` | Sign a PSBT and optionally send display metadata |
 | `signMessage(message)` | Sign a message to prove address ownership (requires confirmation) |
-| `signTransaction(opts)` | Build + sign + finalize in one call |
+| `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |
+| `signPqTransaction(opts)` | Spend from a PQ address: build raw tx + sign via `sign_tx` (used internally by `signTransaction` in PQ mode) |
+
+### Post-Quantum helpers
+
+| Function | Description |
+|---|---|
+| `isPQAddress(addr)` | True for `nq1…`/`tnq1…` AuthScript addresses |
+| `decodeAddress(addr)` | Decode a legacy or PQ address (`{ type, commitment \| hash, … }`) |
+| `encodeDestinationScript(addr)` | Output scriptPubKey for any supported address |
+| `publicKeyToAddress(pubkeyHex, { network, keyType })` | Derive an address from a public key + mode |
+| `resolveNetwork(network, keyType)` | Map the two axes to a `NetworkType` |
+| `buildUnsignedPQTransaction(opts)` | Build the unsigned raw tx + per-input metadata for `sign_tx` |
+| `extractPQWitness(signedTxHex, index?)` | Decode the AuthScript witness (`authType`, `signature`, `pubkey`, `witnessScript`) |
+| `pqAuthScriptSighash(opts)` | Recompute the AuthScript sighash (to verify device signatures) |
 
 ### `buildPSBT(options)`
 
@@ -315,7 +457,7 @@ Finalize a signed PSBT. Returns `{ txHex, txId }`.
 
 ### `finalizeSignedPSBT(originalPsbtBase64, signedPsbtBase64, network)`
 
-Merge a signed PSBT returned by NeuraiHW with the original PSBT and finalize it.
+Merge a signed PSBT returned by the device with the original PSBT and finalize it.
 This helper also supports the minimal PSBT format returned by `uNeurai`, and
 includes fallback logic for legacy P2PKH finalization used by Neurai.
 
