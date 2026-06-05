@@ -102,11 +102,15 @@ describe("PSBT helpers", () => {
     if (!payment.address || !payment.output) {
       throw new Error("Failed to create P2PKH fixture");
     }
+    // Capture into consts so the narrowing survives inside the closure below
+    // (TypeScript drops property narrowing across function boundaries).
+    const paymentOutput = payment.output;
+    const paymentAddress = payment.address;
 
     const previousTx = new bitcoin.Transaction();
     previousTx.version = 2;
     previousTx.addInput(Buffer.alloc(32), 0xffffffff);
-    previousTx.addOutput(payment.output, 1000n);
+    previousTx.addOutput(paymentOutput, 1000n);
 
     expect(() =>
       buildPSBT({
@@ -115,18 +119,18 @@ describe("PSBT helpers", () => {
           {
             txid: previousTx.getId(),
             vout: 0,
-            scriptPubKey: Buffer.from(payment.output).toString("hex"),
+            scriptPubKey: Buffer.from(paymentOutput).toString("hex"),
             satoshis: 1000,
             rawTxHex: previousTx.toHex(),
           },
         ],
         outputs: [
           {
-            address: payment.address,
+            address: paymentAddress,
             value: 1000,
           },
         ],
-        changeAddress: payment.address,
+        changeAddress: paymentAddress,
         pubkey: Buffer.from(keyPair.publicKey).toString("hex"),
         masterFingerprint: TEST_FINGERPRINT,
         derivationPath: TEST_PATH,

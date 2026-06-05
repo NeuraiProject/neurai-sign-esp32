@@ -65,7 +65,7 @@ function installMockSerial(port: SerialPort) {
 }
 
 afterEach(() => {
-  delete (navigator as Navigator & { serial?: Serial }).serial;
+  delete (navigator as unknown as { serial?: Serial }).serial;
   vi.restoreAllMocks();
 });
 
@@ -125,7 +125,7 @@ describe("SerialConnection", () => {
   });
 
   it("throws if Web Serial is unavailable", async () => {
-    delete (navigator as Navigator & { serial?: Serial }).serial;
+    delete (navigator as unknown as { serial?: Serial }).serial;
 
     const connection = new SerialConnection();
     await expect(connection.open()).rejects.toThrow(/Web Serial API not supported/);
