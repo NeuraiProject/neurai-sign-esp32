@@ -155,6 +155,54 @@ export class SerialConnection {
     throw new Error("Device response timeout");
   }
 
+  /**
+   * Like {@link sendCommandFinal}, but the timeout window is reset on every
+   * `processing` heartbeat instead of being a single global deadline. Suited to
+   * long, multi-step operations (e.g. PQ ML-DSA signing of several inputs),
+   * where each input may take many seconds and the device pings between steps.
+   *
+   * @param perResponseTimeoutMs max time to wait for the *next* message (reset per heartbeat)
+   * @param maxTotalMs hard ceiling across the whole operation (safety net)
+   */
+  async sendCommandHeartbeat(
+    command: Record<string, unknown>,
+    perResponseTimeoutMs = 30000,
+    maxTotalMs = 600000
+  ): Promise<DeviceResponse> {
+    if (!this.writer) {
+      throw new Error("Serial port not connected");
+    }
+
+    this.responseQueue = [];
+
+    const json = JSON.stringify(command);
+    console.debug("[NeuraiESP32 Serial] Sending command", {
+      action: command.action,
+      payloadLength: json.length + 1,
+      perResponseTimeoutMs,
+      maxTotalMs,
+    });
+    await this.writeChunked(json);
+    await this.writer.ready;
+    await this.writer.write("\n");
+
+    const startTime = Date.now();
+    for (;;) {
+      if (Date.now() - startTime > maxTotalMs) {
+        throw new Error("Device response timeout");
+      }
+      const response = await this.waitForResponse(perResponseTimeoutMs);
+      if (!response) {
+        throw new Error("Device response timeout");
+      }
+      if (response.status === "processing") {
+        // Heartbeat: keep waiting; the per-response window resets next iteration.
+        continue;
+      }
+      return response;
+    }
+  }
+
   private async readLoop(): Promise<void> {
     let buffer = "";
 

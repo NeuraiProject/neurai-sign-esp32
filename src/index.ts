@@ -26,15 +26,47 @@ export { SerialConnection } from "./serial.js";
 // Network configs
 export {
   getNetwork,
+  resolveNetwork,
+  getPQNetworkParams,
   neuraiMainnet,
   neuraiTestnet,
   neuraiLegacyMainnet,
   neuraiLegacyTestnet,
+  neuraiPQMainnet,
+  neuraiPQTestnet,
 } from "./networks.js";
+export type { PQNetworkParams } from "./networks.js";
+
+// PQ address / AuthScript helpers
+export {
+  isPQAddress,
+  decodeAddress,
+  encodeDestinationScript,
+  publicKeyToAddress,
+  pqAddressFromPublicKey,
+  pqCommitment,
+  pqAuthDescriptor,
+  DEFAULT_WITNESS_SCRIPT_HEX,
+} from "./pq-address.js";
+export type { DecodedAddress } from "./pq-address.js";
+
+// PQ raw-transaction builder (spend from PQ)
+export {
+  buildUnsignedPQTransaction,
+  parseSignedPQTransaction,
+  MAX_PQ_INPUTS,
+  MAX_OUTPUTS,
+} from "./pq-tx.js";
+export type {
+  IPQSignInput,
+  IBuildUnsignedPQTxOptions,
+  IUnsignedPQTx,
+} from "./pq-tx.js";
 
 // Types
 export type {
   IUTXO,
+  IPQUTXO,
   ITxOutput,
   IBuildPSBTOptions,
   IBuildPSBTFromRawOptions,
@@ -46,9 +78,12 @@ export type {
   IAddressResponse,
   IBip32PubkeyResponse,
   ISignPsbtResponse,
+  ISignTxResponse,
   ISignMessageResponse,
   IErrorResponse,
   ISerialOptions,
   ISignResult,
+  Network,
+  KeyType,
   NetworkType,
 } from "./types.js";

@@ -46,6 +46,7 @@
   "homepage": "https://github.com/neuraiproject/neurai-sign-esp32#readme",
   "dependencies": {
     "@bitcoinerlab/secp256k1": "1.2.0",
+    "bech32": "^2.0.0",
     "bitcoinjs-lib": "7.0.1",
     "buffer": "^6.0.3",
     "ecpair": "3.0.1",

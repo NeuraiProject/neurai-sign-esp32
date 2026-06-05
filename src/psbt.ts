@@ -12,6 +12,7 @@
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 import { getNetwork } from "./networks.js";
+import { encodeDestinationScript, isPQAddress } from "./pq-address.js";
 import type {
   IBuildPSBTFromRawOptions,
   IBuildPSBTOptions,
@@ -43,6 +44,21 @@ function parseMasterFingerprint(hex: string): Buffer {
     );
   }
   return Buffer.from(hex, "hex");
+}
+
+/**
+ * Build a PSBT output descriptor for a destination address. PQ (AuthScript)
+ * addresses are not understood by bitcoinjs-lib, so they are encoded to a raw
+ * scriptPubKey here; legacy addresses are passed through by address.
+ */
+function addressOutput(
+  address: string,
+  value: bigint
+): { address: string; value: bigint } | { script: Buffer; value: bigint } {
+  if (isPQAddress(address)) {
+    return { script: encodeDestinationScript(address), value };
+  }
+  return { address, value };
 }
 
 function getSignatureHashType(signature: Uint8Array): number {
@@ -132,17 +148,13 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
   }
 
   for (const output of outputs) {
-    psbt.addOutput({
-      address: output.address,
-      value: BigInt(output.value),
-    });
+    psbt.addOutput(addressOutput(output.address, BigInt(output.value)));
   }
 
   const DUST_THRESHOLD = 546;
   if (change >= DUST_THRESHOLD) {
     psbt.addOutput({
-      address: changeAddress,
-      value: BigInt(change),
+      ...addressOutput(changeAddress, BigInt(change)),
       bip32Derivation,
     });
   }

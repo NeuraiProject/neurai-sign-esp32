@@ -100,6 +100,11 @@ export interface IDeviceInfo {
   version: string;
   chip: string;
   network: string;
+  /**
+   * Key/signature scheme the device operates in. Devices/firmware predating PQ
+   * support omit this field; the library then assumes `"legacy"`.
+   */
+  key_type?: KeyType;
   coin_type: number;
   master_fingerprint: string;
   path: string;
@@ -109,9 +114,41 @@ export interface IDeviceInfo {
 
 export interface IAddressResponse {
   status: string;
+  /** Address type: legacy P2PKH or PQ AuthScript. */
+  type?: KeyType;
+  /**
+   * Neurai address. In PQ mode the device returns only `pubkey`; the library
+   * derives this address from the pubkey + mode and fills it in.
+   */
   address: string;
+  /** Compressed secp256k1 pubkey (33B, legacy) or raw ML-DSA-44 pubkey (1312B, PQ), hex. */
   pubkey: string;
   path: string;
+  // ── PQ-only (present when type === "pq") ──
+  /** AuthScript auth type (1 = PQ). */
+  authType?: number;
+  /** witnessScript hex (phase 1: "51" = OP_TRUE). */
+  witnessScript?: string;
+  /** 32-byte AuthScript commitment (hex), derived by the library. */
+  commitment?: string;
+  /** auth_descriptor (hex), derived by the library. */
+  authDescriptor?: string;
+}
+
+/**
+ * A UTXO locked to the device's PQ (AuthScript) address. No derivation path is
+ * needed: it belongs to the device's single address (see docs §2).
+ */
+export interface IPQUTXO {
+  txid: string;
+  vout: number;
+  /** Prevout value in satoshis. */
+  satoshis: number;
+  /** Prevout scriptPubKey hex ("5120<commitment>"). */
+  scriptPubKey: string;
+  type: "pq";
+  /** Override for the sighash amount (use 0 for asset-wrapped outputs). */
+  sighashAmount?: number;
 }
 
 export interface IBip32PubkeyResponse {
@@ -152,6 +189,7 @@ export type DeviceResponse =
   | IAddressResponse
   | IBip32PubkeyResponse
   | ISignPsbtResponse
+  | ISignTxResponse
   | ISignMessageResponse
   | IErrorResponse
   | IProcessingResponse;
@@ -167,17 +205,53 @@ export interface ISerialOptions {
 
 // ─── Network type ────────────────────────────────────────────────────────────
 
-export type NetworkType = "xna" | "xna-test" | "xna-legacy" | "xna-legacy-test";
+/**
+ * Public API model: two orthogonal axes.
+ * - `Network`  — the chain network (mainnet / testnet).
+ * - `KeyType`  — the key/signature scheme the device operates in
+ *   (`legacy` = ECDSA/secp256k1 P2PKH, `pq` = ML-DSA-44 AuthScript).
+ *
+ * The device declares both via `info` (`network` + `key_type`); the library
+ * routes accordingly. See docs/pq-protocol-design.md.
+ */
+export type Network = "mainnet" | "testnet";
+export type KeyType = "legacy" | "pq";
+
+/**
+ * Internal resolved identifier used to pick bitcoinjs-lib params / HRP / coin
+ * type. Not part of the primary public surface — prefer (Network, KeyType).
+ * `xna-legacy` / `xna-legacy-test` are the legacy coin-type-0 networks kept for
+ * backward compatibility and are unrelated to `KeyType: "legacy"`.
+ */
+export type NetworkType =
+  | "xna"
+  | "xna-test"
+  | "xna-legacy"
+  | "xna-legacy-test"
+  | "xna-pq"
+  | "xna-pq-test";
 
 // ─── Sign result (after finalization) ────────────────────────────────────────
 
 export interface ISignResult {
-  /** Signed PSBT in base64 */
-  signedPsbtBase64: string;
+  /** Signed PSBT in base64 (legacy/ECDSA flow only; absent for the PQ flow). */
+  signedPsbtBase64?: string;
   /** Finalized raw transaction hex, ready to broadcast */
   txHex: string;
   /** Transaction ID */
   txId: string;
   /** Number of inputs signed by the device */
   signedInputs: number;
+}
+
+// ─── sign_tx (PQ) device response ────────────────────────────────────────────
+
+export interface ISignTxResponse {
+  status: string;
+  /** Fully-signed raw transaction hex, ready to broadcast. */
+  tx: string;
+  /** Transaction id (hex). */
+  txid?: string;
+  /** Number of inputs signed by the device. */
+  signed_inputs: number;
 }

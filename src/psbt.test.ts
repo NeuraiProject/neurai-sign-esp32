@@ -135,6 +135,43 @@ describe("PSBT helpers", () => {
     ).toThrow(/Insufficient funds/);
   });
 
+  it("sends to a PQ destination address (output encoded as AuthScript)", () => {
+    const fixture = createSignedFixture();
+    // A PQ destination address (firmware oracle vector). Spending legacy ECDSA
+    // inputs while paying to a PQ address must work with the standard flow.
+    const pqAddress =
+      "tnq1pdsj0aztvgwv3rwgml360stpyp228zrggyga6n4sdenmetm6wv3tqzddk95";
+    const expectedScript =
+      "5120" +
+      "6c24fe896c439911b91bfc74f82c240a94710d08223ba9d60dccf795ef4e6456";
+
+    const psbtBase64 = buildPSBT({
+      network: TEST_NETWORK,
+      utxos: [
+        {
+          txid: fixture.previousTx.getId(),
+          vout: 0,
+          scriptPubKey: Buffer.from(
+            fixture.previousTx.outs[0].script
+          ).toString("hex"),
+          satoshis: 500000,
+          rawTxHex: fixture.previousTx.toHex(),
+        },
+      ],
+      outputs: [{ address: pqAddress, value: 100000 }],
+      changeAddress: fixture.address,
+      pubkey: "02".padEnd(66, "0"),
+      masterFingerprint: TEST_FINGERPRINT,
+      derivationPath: TEST_PATH,
+      feeRate: 1,
+    });
+
+    const psbt = bitcoin.Psbt.fromBase64(psbtBase64, { network: fixture.network });
+    const out = psbt.txOutputs.find((o) => o.value === 100000n);
+    expect(out).toBeDefined();
+    expect(Buffer.from(out!.script).toString("hex")).toBe(expectedScript);
+  });
+
   it("builds a PSBT from a raw unsigned transaction", () => {
     const fixture = createSignedFixture();
     const unsignedTx = new bitcoin.Transaction();
