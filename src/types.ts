@@ -94,6 +94,23 @@ export interface IBuildAssetTransferDisplayMetadataOptions {
 
 // ─── Device responses ────────────────────────────────────────────────────────
 
+/**
+ * Lightweight device handshake returned by `ping` / `device_info`. Safe to poll:
+ * it requires NO on-device confirmation and returns nothing that identifies the
+ * wallet (no fingerprint, address, pubkey or network). Use it to detect/enumerate
+ * a NeuraiHW device; use {@link IDeviceInfo} (via `getInfo`, behind on-device
+ * approval) for the actual wallet data.
+ */
+export interface IPingResponse {
+  status: string;
+  device: string;
+  /** Protocol/app version (matches `info`'s `version`). */
+  version: string;
+  /** Firmware version (ping-only; not returned by `info`). */
+  firmware_version: string;
+  chip: string;
+}
+
 export interface IDeviceInfo {
   status: string;
   device: string;
@@ -185,6 +202,7 @@ export interface IProcessingResponse {
 }
 
 export type DeviceResponse =
+  | IPingResponse
   | IDeviceInfo
   | IAddressResponse
   | IBip32PubkeyResponse

@@ -494,7 +494,8 @@ Main class for device interaction.
 |---|---|
 | `connect()` | Open USB Serial connection (browser dialog) |
 | `disconnect()` | Close connection |
-| `getInfo()` | Get device info incl. `key_type` (no confirmation) |
+| `ping()` | Detect/handshake the device (no confirmation, no wallet-identifying data) — use this to enumerate devices |
+| `getInfo()` | Get device info incl. `key_type` (**requires confirmation** on consent-model firmware) |
 | `getAddress()` | Get address + pubkey (requires confirmation); derives the address from the pubkey + mode (legacy or PQ) |
 | `getBip32Pubkey()` | Get account xpub (requires confirmation) |
 | `signPsbt(base64)` | Sign a PSBT (requires confirmation) |

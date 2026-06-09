@@ -84,6 +84,7 @@ export type {
   IPSBTInputMetadata,
   IAssetTransferDisplayMetadata,
   ISigningDisplayMetadata,
+  IPingResponse,
   IDeviceInfo,
   IAddressResponse,
   IBip32PubkeyResponse,

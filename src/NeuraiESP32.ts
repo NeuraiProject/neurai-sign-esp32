@@ -34,6 +34,7 @@ import type {
   IDeviceInfo,
   IErrorResponse,
   INeuraiTransport,
+  IPingResponse,
   IPQUTXO,
   ISerialOptions,
   ISigningDisplayMetadata,
@@ -82,10 +83,34 @@ export class NeuraiESP32 {
     await this.serial.close();
   }
 
+  /**
+   * Detect the device without prompting the owner. `ping` (alias `device_info`)
+   * answers immediately, requires NO on-device confirmation and returns nothing
+   * that identifies the wallet (no fingerprint, address, pubkey or network) — so
+   * it is safe to poll. Use this to enumerate/handshake a NeuraiHW device; use
+   * {@link getInfo} (behind on-device approval) for the actual wallet data.
+   *
+   * Throws on firmware too old to know `ping` (it replies `Unknown action`);
+   * callers that must support such firmware can catch and fall back to `getInfo`.
+   */
+  async ping(): Promise<IPingResponse> {
+    // `ping` replies instantly (no user approval), so a short timeout is enough.
+    const response = await this.serial.sendCommand({ action: "ping" }, 5000);
+
+    this.assertSuccess(response);
+    return response as IPingResponse;
+  }
+
+  /**
+   * Read the device's wallet info (network, key_type, master fingerprint, address,
+   * pubkey). As of the consent-model firmware this REQUIRES on-device approval and
+   * the device waits up to 30 s for it, so the timeout must accommodate that wait —
+   * do not use `getInfo` merely to detect the device; use {@link ping} for that.
+   */
   async getInfo(): Promise<IDeviceInfo> {
     const response = await this.serial.sendCommand(
       { action: "info" },
-      5000
+      35000
     );
 
     this.assertSuccess(response);
