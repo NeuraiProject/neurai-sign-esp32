@@ -202,6 +202,52 @@ console.log(bip32.master_fingerprint); // "a1b2c3d4"
 console.log(bip32.path);              // "m/44'/1900'/0'"
 ```
 
+### Provision an unconfigured device (`setup_seed`)
+
+Firmware with the security layer boots **unconfigured** until a seed is stored
+(and **locked** at every boot after that, until the owner enters the PIN on the
+device). Instead of typing 12/24 words with two buttons, a host that holds the
+mnemonic (e.g. it just generated the wallet) can push it over USB:
+
+```javascript
+// 1) Where is the device at?
+const state = await device.getDeviceState(); // "ready" | "locked" | "unconfigured"
+
+if (state === "unconfigured") {
+  // 2) Send the seed. The owner must physically approve a SUMMARY on the
+  //    device within 60 s (word count + network + key type — never the words).
+  const res = await device.setupSeed({
+    mnemonic: "word1 word2 ... word12",  // 12 or 24 BIP39 words
+    network: "testnet",                  // REQUIRED: "mainnet" | "testnet"
+    keyType: "pq",                       // REQUIRED: "pq" | "legacy" (pq = testnet-only)
+  });
+  console.log(res.state);                // "pin_required"
+
+  // 3) The owner now creates the PIN ON THE DEVICE (it never travels over
+  //    USB). Poll until the seed is encrypted and the keys are derived:
+  await device.waitUntilReady();         // default: every 2 s, up to 5 min
+}
+
+// 4) Normal operation from here.
+const info = await device.getInfo();
+```
+
+Notes:
+
+- `setup_seed` is **only accepted while no encrypted seed is stored** (first
+  boot, dev-fallback firmware, or after an on-device wipe). On a configured
+  device it throws `"Device already configured: wipe it on-device first"`
+  without prompting — it can never overwrite an existing wallet.
+- If the owner rejects (or the 60 s pass) you get `"User cancelled"`; if they
+  cancel during PIN entry the device stays unconfigured and you can simply call
+  `setupSeed` again.
+- `getDeviceState()` distinguishes `locked` (ask the user to enter the PIN on
+  the device) from `unconfigured` (provisioning applies) by parsing the
+  firmware's gate errors; it never prompts and is safe to poll.
+- **Security:** the mnemonic transits the host OS and the USB link in
+  plaintext — acceptable when this host generated the seed, but entering the
+  words directly on the device remains the more private path.
+
 ## Post-Quantum (PQ / ML-DSA-44) support
 
 The device operates in one mode at a time, declared via `info` on two
@@ -474,6 +520,7 @@ using JSON messages. Supported commands:
 | Command | Confirmation | Timeout |
 |---|---|---|
 | `info` | None | 5s |
+| `setup_seed` | Physical button (summary on screen) | 60s approval + on-device PIN entry |
 | `get_address` | Physical button | 30s |
 | `get_bip32_pubkey` | Physical button | 30s |
 | `sign_psbt` | Physical button + TX review | 60s |
@@ -483,6 +530,11 @@ using JSON messages. Supported commands:
 `info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
 returns only the public key (the library derives the address) and signing uses
 `sign_tx` (raw transaction) instead of `sign_psbt`.
+
+While the device is **locked** (encrypted seed stored, PIN pending) or
+**unconfigured** (no seed), the firmware rejects every command except
+`setup_seed` with a distinct error message; `getDeviceState()` parses those
+into `"locked"` / `"unconfigured"`.
 
 ## API
 
@@ -495,6 +547,9 @@ Main class for device interaction.
 | `connect()` | Open USB Serial connection (browser dialog) |
 | `disconnect()` | Close connection |
 | `ping()` | Detect/handshake the device (no confirmation, no wallet-identifying data) — use this to enumerate devices |
+| `getDeviceState()` | `"ready"` \| `"locked"` \| `"unconfigured"` — safe to poll, no confirmation |
+| `setupSeed({ mnemonic, network, keyType })` | Provision an unconfigured device with a host-held seed (owner approves on device, then sets the PIN there) |
+| `waitUntilReady(opts?)` | Poll until the device is operational (after `setupSeed` PIN entry or unlock) |
 | `getInfo()` | Get device info incl. `key_type` (**requires confirmation** on consent-model firmware) |
 | `getAddress()` | Get address + pubkey (requires confirmation); derives the address from the pubkey + mode (legacy or PQ) |
 | `getBip32Pubkey()` | Get account xpub (requires confirmation) |

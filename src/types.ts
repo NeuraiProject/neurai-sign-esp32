@@ -191,6 +191,46 @@ export interface ISignMessageResponse {
   message: string;
 }
 
+// ─── Host-initiated device provisioning (setup_seed) ─────────────────────────
+
+/**
+ * Options for {@link NeuraiESP32.setupSeed}: provision an UNCONFIGURED device
+ * with a host-held mnemonic. The firmware only accepts the command while no
+ * encrypted seed is stored; the owner must physically approve on the device
+ * (a summary is shown — never the words) and then creates the PIN ON the
+ * device. The PIN never travels over USB.
+ */
+export interface ISetupSeedOptions {
+  /** 12 or 24 BIP39 words, space-separated. Validated again on-device. */
+  mnemonic: string;
+  /** Chain network. REQUIRED by the firmware (no defaults). */
+  network: Network;
+  /** Key scheme. REQUIRED by the firmware. `pq` is testnet-only. */
+  keyType: KeyType;
+}
+
+/**
+ * Successful `setup_seed` reply: the owner approved on the device and is now
+ * creating the PIN there. Poll {@link NeuraiESP32.getDeviceState} (or use
+ * {@link NeuraiESP32.waitUntilReady}) to detect completion — the protocol has
+ * no push events.
+ */
+export interface ISetupSeedResponse {
+  status: string;
+  /** Always `"pin_required"`: the owner must finish the PIN on the device. */
+  state: "pin_required";
+}
+
+/**
+ * Coarse device state derived from the `ping` gate errors:
+ * - `ready`        — keys derived; normal commands work.
+ * - `locked`       — an encrypted seed is stored but the PIN has not been
+ *                    entered yet (ask the user to unlock on the device).
+ * - `unconfigured` — no seed stored; `setup_seed` (or the on-device wizard)
+ *                    is the way forward.
+ */
+export type DeviceState = "ready" | "locked" | "unconfigured";
+
 export interface IErrorResponse {
   status: "error";
   message: string;
@@ -209,6 +249,7 @@ export type DeviceResponse =
   | ISignPsbtResponse
   | ISignTxResponse
   | ISignMessageResponse
+  | ISetupSeedResponse
   | IErrorResponse
   | IProcessingResponse;
 

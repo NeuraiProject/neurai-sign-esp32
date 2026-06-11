@@ -29,6 +29,7 @@ import {
 import { buildUnsignedPQTransaction, parseSignedPQTransaction } from "./pq-tx.js";
 import type {
   DeviceResponse,
+  DeviceState,
   IAddressResponse,
   IBip32PubkeyResponse,
   IDeviceInfo,
@@ -37,6 +38,8 @@ import type {
   IPingResponse,
   IPQUTXO,
   ISerialOptions,
+  ISetupSeedOptions,
+  ISetupSeedResponse,
   ISigningDisplayMetadata,
   ISignMessageResponse,
   ISignPsbtResponse,
@@ -99,6 +102,96 @@ export class NeuraiESP32 {
 
     this.assertSuccess(response);
     return response as IPingResponse;
+  }
+
+  /**
+   * Coarse device state, derived from `ping` and the firmware's gate errors:
+   * `ready` (keys derived, normal commands work), `locked` (encrypted seed
+   * stored, PIN not entered yet — ask the user to unlock on the device) or
+   * `unconfigured` (no seed stored — {@link setupSeed} or the on-device wizard
+   * applies). Safe to poll; never prompts on the device.
+   *
+   * Firmware predating the security layer answers `ping` successfully in every
+   * state, so it reports `ready`.
+   */
+  async getDeviceState(): Promise<DeviceState> {
+    const response = await this.serial.sendCommand({ action: "ping" }, 5000);
+    if (response.status !== "error") {
+      return "ready";
+    }
+    const message = ((response as IErrorResponse).message ?? "").toLowerCase();
+    if (message.includes("locked")) return "locked";
+    if (message.includes("not configured")) return "unconfigured";
+    throw new Error(`Device error: ${(response as IErrorResponse).message}`);
+  }
+
+  /**
+   * Provision an UNCONFIGURED device with a host-held mnemonic (`setup_seed`).
+   *
+   * The firmware only accepts this while **no encrypted seed is stored** (first
+   * boot, dev-fallback mode, or after a wipe + reboot); on a configured device
+   * it errors without prompting. The owner must physically approve a summary on
+   * the device (word count + network + key type — the words are NEVER shown)
+   * within 60 s, and then creates the PIN **on the device**: the PIN never
+   * travels over USB. The seed transits the host and the USB link in plaintext
+   * by design (this host generated it) — on-device entry remains the more
+   * private path.
+   *
+   * Resolves with `{ state: "pin_required" }` once the owner approves. The
+   * protocol has no push events, so detect completion by polling — see
+   * {@link waitUntilReady}. If the owner cancels the PIN entry afterwards, the
+   * device stays unconfigured and `setupSeed` can simply be called again.
+   */
+  async setupSeed(options: ISetupSeedOptions): Promise<ISetupSeedResponse> {
+    // Client-side pre-checks for fast feedback; the device re-validates
+    // everything (including the BIP39 checksum) authoritatively.
+    const words = options.mnemonic.trim().split(/\s+/).filter(Boolean);
+    if (words.length !== 12 && words.length !== 24) {
+      throw new Error("Mnemonic must be 12 or 24 words");
+    }
+    if (options.keyType === "pq" && options.network !== "testnet") {
+      throw new Error("PQ key type requires testnet");
+    }
+
+    // 60 s on-device approval window + margin.
+    const response = await this.serial.sendCommand(
+      {
+        action: "setup_seed",
+        mnemonic: words.join(" "),
+        network: options.network,
+        key_type: options.keyType,
+      },
+      70000
+    );
+
+    this.assertSuccess(response);
+    return response as ISetupSeedResponse;
+  }
+
+  /**
+   * Poll {@link getDeviceState} until the device reports `ready` — i.e. the
+   * owner finished creating the PIN after {@link setupSeed} (or unlocked the
+   * device) and the keys are derived. Resolves with the final state; throws on
+   * timeout.
+   */
+  async waitUntilReady(options?: {
+    /** Polling interval in ms (default 2000). */
+    pollMs?: number;
+    /** Give up after this long (default 300000 = 5 min). */
+    timeoutMs?: number;
+  }): Promise<DeviceState> {
+    const pollMs = options?.pollMs ?? 2000;
+    const timeoutMs = options?.timeoutMs ?? 300000;
+    const start = Date.now();
+
+    for (;;) {
+      const state = await this.getDeviceState();
+      if (state === "ready") return state;
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`Timed out waiting for device (last state: ${state})`);
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
   }
 
   /**
