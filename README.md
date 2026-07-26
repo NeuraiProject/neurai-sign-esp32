@@ -581,6 +581,7 @@ using JSON messages. Supported commands:
 | `get_depin_identity` | None (session-gated) | 10s |
 | `depin_sign` | None (session-gated, rate-limited) | 30s |
 | `depin_decrypt` | None (session-gated, rate-limited) | 30s |
+| `depin_decrypt_payload` | None (session-gated, rate-limited) | 30s |
 | `depin_session_end` | None | 10s |
 
 `info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
@@ -616,6 +617,7 @@ Main class for device interaction.
 | `getDepinIdentity()` | Read the DePIN chat identity (address + pubkey + path); session-gated, no per-call prompt |
 | `depinSign(params)` | Sign a DePIN message on-device (DER over the canonical CDepinMessage); session-gated, rate-limited |
 | `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated |
+| `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated |
 | `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |
 | `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |
 | `signPqTransaction(opts)` | Spend from a PQ address: build raw tx + sign via `sign_tx` (used internally by `signTransaction` in PQ mode) |

@@ -216,6 +216,33 @@ describe("depinDecrypt", () => {
   });
 });
 
+describe("depinDecryptPayload", () => {
+  it("sends the bare ECIES payload and returns the base64 plaintext", async () => {
+    const { transport, sent } = createMockTransport([
+      { status: "success", plaintext_b64: "aGk=", op_count: 3 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    const res = await device.depinDecryptPayload("cafebabe");
+
+    expect(res.plaintext_b64).toBe("aGk=");
+    expect(res.op_count).toBe(3);
+    expect(sent[0]).toEqual({
+      action: "depin_decrypt_payload",
+      encrypted_payload: "cafebabe",
+    });
+  });
+
+  it("surfaces not_for_us when this identity is not a recipient", async () => {
+    const { transport } = createMockTransport([
+      { status: "error", message: "not_for_us" },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    await expect(device.depinDecryptPayload("00")).rejects.toThrow("not_for_us");
+  });
+});
+
 describe("depinSessionEnd", () => {
   it("sends depin_session_end and resolves on success", async () => {
     const { transport, sent } = createMockTransport([

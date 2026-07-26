@@ -1,6 +1,6 @@
 {
   "name": "@neuraiproject/neurai-sign-esp32",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "description": "Create and sign PSBTs for Neurai via ESP32 hardware wallet",
   "type": "module",
   "main": "dist/index.cjs",

@@ -379,6 +379,24 @@ export class NeuraiESP32 {
   }
 
   /**
+   * Decrypt a BARE ECIES payload — the `encrypted_payload_hex` a DePIN server
+   * returns per message (and the format of privacy-wrapped `{ encrypted }`
+   * server responses) — without the surrounding CDepinMessage framing. Use this
+   * when you have the decomposed server item rather than a full serialized
+   * message (the common case for a chat client). Returns the plaintext
+   * base64-encoded, or a `not_for_us` device error if not a recipient.
+   * Requires an active session and the `depin_message` capability.
+   */
+  async depinDecryptPayload(encryptedPayloadHex: string): Promise<IDepinDecryptResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "depin_decrypt_payload", encrypted_payload: encryptedPayloadHex },
+      35000
+    );
+    this.assertSuccess(response);
+    return response as IDepinDecryptResponse;
+  }
+
+  /**
    * End the current DePIN session: auto-sign/decrypt stops and the identity is
    * no longer revealed until a new {@link depinSessionBegin} approval. Safe to
    * call with no active session.
