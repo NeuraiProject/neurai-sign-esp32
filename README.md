@@ -202,6 +202,57 @@ console.log(bip32.master_fingerprint); // "a1b2c3d4"
 console.log(bip32.path);              // "m/44'/1900'/0'"
 ```
 
+### DePIN chat identity (sign/decrypt on the device)
+
+The device holds a **dedicated DePIN chat identity** on BIP44 account `100'`
+(`m/44'/<coin>'/100'/0/0`), separate from the funds account, so a wallet can
+chat over Neurai DePIN messaging without ever exposing its mnemonic. Signing and
+decryption happen **on the chip**.
+
+Feature-detect first — `ping()` advertises `capabilities`: `"depin_identity"`
+(identity + session) and `"depin_message"` (on-device `depinSign`/`depinDecrypt`).
+
+```javascript
+const { capabilities = [] } = await device.ping();
+if (!capabilities.includes("depin_identity")) throw new Error("update firmware");
+
+// 1) Open a session on the channel token — ONE physical approval on the device.
+//    While active the device reveals its identity and auto-signs/decrypts on
+//    this channel (bounded by an idle timeout, a hard cap, and a rate limit).
+const session = await device.depinSessionBegin("&NEURAI.CHAT", {
+  ttlMinutes: 15,   // idle window (1–60, default 15)
+  ratePerMin: 100,  // in-session sign/decrypt cap (default 100)
+});
+console.log(session.expires_in_s, session.max_session_s, session.rate_per_min);
+
+// 2) Read the chat identity (no per-call prompt while the session is open).
+//    This is what a hardware wallet uses instead of deriving from a mnemonic.
+const id = await device.getDepinIdentity();
+console.log(id.address, id.pubkey, id.path, id.network); // "xna" | "xna-test"
+
+// 3) Sign an outgoing message. The host does the recipient-pubkey ECIES
+//    encryption and passes the fields; the device builds the canonical
+//    CDepinMessage preimage and returns the DER signature.
+const { signature, op_count } = await device.depinSign({
+  token: "&NEURAI.CHAT",
+  sender: id.address,                 // must equal the device's DePIN address
+  timestamp: Math.floor(Date.now() / 1000),
+  messageType: 1,                     // 1 = direct (DATA), 2 = group (BROADCAST)
+  encryptedPayload: eciesPayloadHex,  // built host-side
+});
+
+// 4) Decrypt an incoming CDepinMessage addressed to this identity.
+//    GCM-authenticated; the sender's signature is verified host-side.
+const { plaintext_b64 } = await device.depinDecrypt(cdepinMessageHex);
+
+// 5) End the session when done (also revoked on lock / USB disconnect / timeout).
+await device.depinSessionEnd();
+```
+
+> **Note on time:** the device has no real-time clock, so it does **not** check
+> the freshness of `timestamp` — the host supplies it and the chip only validates
+> the message structure and channel/sender scope.
+
 ### Provision an unconfigured device (`setup_seed`)
 
 Firmware with the security layer boots **unconfigured** until a seed is stored
@@ -526,6 +577,11 @@ using JSON messages. Supported commands:
 | `sign_psbt` | Physical button + TX review | 60s |
 | `sign_tx` (PQ) | Physical button + TX review | per-heartbeat (ML-DSA is slow) |
 | `sign_message` | Physical button | 30s |
+| `depin_session_begin` | Physical button (channel token on screen) | 30s |
+| `get_depin_identity` | None (session-gated) | 10s |
+| `depin_sign` | None (session-gated, rate-limited) | 30s |
+| `depin_decrypt` | None (session-gated, rate-limited) | 30s |
+| `depin_session_end` | None | 10s |
 
 `info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
 returns only the public key (the library derives the address) and signing uses
@@ -556,6 +612,11 @@ Main class for device interaction.
 | `signPsbt(base64)` | Sign a PSBT (requires confirmation) |
 | `signPsbt(base64, display?)` | Sign a PSBT and optionally send display metadata |
 | `signMessage(message)` | Sign a message to prove address ownership (requires confirmation) |
+| `depinSessionBegin(token, opts?)` | Open a DePIN chat session on a channel token (one approval); enables identity read + auto sign/decrypt |
+| `getDepinIdentity()` | Read the DePIN chat identity (address + pubkey + path); session-gated, no per-call prompt |
+| `depinSign(params)` | Sign a DePIN message on-device (DER over the canonical CDepinMessage); session-gated, rate-limited |
+| `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated |
+| `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |
 | `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |
 | `signPqTransaction(opts)` | Spend from a PQ address: build raw tx + sign via `sign_tx` (used internally by `signTransaction` in PQ mode) |
 

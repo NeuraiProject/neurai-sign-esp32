@@ -109,6 +109,18 @@ export interface IPingResponse {
   /** Firmware version (ping-only; not returned by `info`). */
   firmware_version: string;
   chip: string;
+  /**
+   * JSON protocol version. Present on firmware that negotiates capabilities;
+   * absent on older firmware. Use it (and {@link capabilities}) to feature-detect
+   * before calling optional command families like DePIN.
+   */
+  protocol_version?: number;
+  /**
+   * Capability tags the firmware advertises, e.g. `"depin_identity"` (identity +
+   * session) and `"depin_message"` (on-device `depin_sign`/`depin_decrypt`).
+   * Absent on firmware predating capability negotiation.
+   */
+  capabilities?: string[];
 }
 
 export interface IDeviceInfo {
@@ -231,6 +243,55 @@ export interface ISetupSeedResponse {
  */
 export type DeviceState = "ready" | "locked" | "unconfigured";
 
+// ─── DePIN chat identity (hw-depin-protocol) ─────────────────────────────────
+// Hardware-wallet DePIN messaging: the device holds a dedicated chat identity
+// (BIP44 account 100') and can sign/decrypt DePIN messages so the mnemonic never
+// leaves the chip. All of these are gated behind a session opened by
+// {@link IDepinSessionResponse}; the `depin_message` capability (see
+// {@link IPingResponse.capabilities}) gates the sign/decrypt pair.
+
+export interface IDepinSessionResponse {
+  status: string;
+  session: boolean;
+  /** Channel token the session is scoped to (soulbound `&…` asset name). */
+  token: string;
+  /** Idle expiry in seconds: the session ends after this long without activity. */
+  expires_in_s: number;
+  /** Hard cap in seconds regardless of activity. */
+  max_session_s: number;
+  /** In-session sign/decrypt rate cap, operations per minute. */
+  rate_per_min: number;
+  protocol_version: number;
+}
+
+export interface IDepinIdentityResponse {
+  status: string;
+  /** DePIN chat address (dedicated BIP44 account 100'). */
+  address: string;
+  /** Compressed secp256k1 public key (33 bytes), hex. */
+  pubkey: string;
+  /** BIP44 derivation path of the DePIN identity key. */
+  path: string;
+  /** Network tag: `"xna"` (mainnet) or `"xna-test"` (testnet). */
+  network: string;
+  protocol_version: number;
+}
+
+export interface IDepinSignResponse {
+  status: string;
+  /** DER signature over the canonical CDepinMessage preimage, hex. */
+  signature: string;
+  /** Total sign+decrypt operations performed in this session. */
+  op_count: number;
+}
+
+export interface IDepinDecryptResponse {
+  status: string;
+  /** Base64-encoded decrypted plaintext (the Matrix payload). */
+  plaintext_b64: string;
+  op_count: number;
+}
+
 export interface IErrorResponse {
   status: "error";
   message: string;
@@ -250,6 +311,10 @@ export type DeviceResponse =
   | ISignTxResponse
   | ISignMessageResponse
   | ISetupSeedResponse
+  | IDepinSessionResponse
+  | IDepinIdentityResponse
+  | IDepinSignResponse
+  | IDepinDecryptResponse
   | IErrorResponse
   | IProcessingResponse;
 

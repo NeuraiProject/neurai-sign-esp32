@@ -32,6 +32,10 @@ import type {
   DeviceState,
   IAddressResponse,
   IBip32PubkeyResponse,
+  IDepinDecryptResponse,
+  IDepinIdentityResponse,
+  IDepinSessionResponse,
+  IDepinSignResponse,
   IDeviceInfo,
   IErrorResponse,
   INeuraiTransport,
@@ -271,6 +275,120 @@ export class NeuraiESP32 {
 
     this.assertSuccess(response);
     return response as ISignMessageResponse;
+  }
+
+  // ─── DePIN chat identity (hw-depin-protocol) ───────────────────────────────
+  // The device holds a dedicated DePIN chat identity (BIP44 account 100') so a
+  // wallet can chat over DePIN without ever exposing its mnemonic. All calls
+  // below require the device unlocked (PIN entered on-device) and, except the
+  // session opener, an active session. Feature-detect with `ping().capabilities`
+  // ("depin_identity" for identity+session, "depin_message" for sign/decrypt).
+
+  /**
+   * Open a DePIN chat session on a channel token. Prompts the owner for ONE
+   * physical approval; while active the device reveals its DePIN identity and
+   * auto-signs/decrypts on that channel without a per-message prompt, bounded by
+   * an idle timeout, a hard cap, and a per-minute rate limit. The session is
+   * revoked on timeout, device lock, or USB disconnect.
+   *
+   * @param token Channel token (soulbound `&…` asset name) to scope the session.
+   * @param options `ttlMinutes` idle window (1–60, default 15); `ratePerMin`
+   *   in-session sign/decrypt cap (default 100).
+   */
+  async depinSessionBegin(
+    token: string,
+    options?: { ttlMinutes?: number; ratePerMin?: number }
+  ): Promise<IDepinSessionResponse> {
+    const command: Record<string, unknown> = {
+      action: "depin_session_begin",
+      token,
+    };
+    if (options?.ttlMinutes !== undefined) command.ttl_minutes = options.ttlMinutes;
+    if (options?.ratePerMin !== undefined) command.rate_per_min = options.ratePerMin;
+
+    // Waits on a physical approval (up to ~30 s), like getInfo/getAddress.
+    const response = await this.serial.sendCommand(command, 35000);
+    this.assertSuccess(response);
+    return response as IDepinSessionResponse;
+  }
+
+  /**
+   * Read the device's DePIN chat identity (address + compressed pubkey + BIP44
+   * path). Requires an active session; no per-call prompt. This is the fix for
+   * the hardware-wallet DePIN spinner: instead of deriving the identity from a
+   * mnemonic the device doesn't expose, the wallet obtains it from the device.
+   */
+  async getDepinIdentity(): Promise<IDepinIdentityResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "get_depin_identity" },
+      10000
+    );
+    this.assertSuccess(response);
+    return response as IDepinIdentityResponse;
+  }
+
+  /**
+   * Sign a DePIN chat message on the device. The host performs the recipient
+   * public-key ECIES encryption and passes the resulting fields; the device
+   * assembles the canonical CDepinMessage preimage and returns the DER
+   * signature. `sender` MUST equal the device's DePIN address and `token` the
+   * active session channel (the device rejects otherwise). Requires an active
+   * session and the `depin_message` capability.
+   *
+   * @param params.messageType 1 = direct (DATA), 2 = group (BROADCAST).
+   * @param params.encryptedPayload Hex ECIES payload built host-side.
+   */
+  async depinSign(params: {
+    token: string;
+    sender: string;
+    timestamp: number;
+    messageType: number;
+    encryptedPayload: string;
+  }): Promise<IDepinSignResponse> {
+    const response = await this.serial.sendCommand(
+      {
+        action: "depin_sign",
+        token: params.token,
+        sender: params.sender,
+        timestamp: params.timestamp,
+        message_type: params.messageType,
+        encrypted_payload: params.encryptedPayload,
+      },
+      35000
+    );
+    this.assertSuccess(response);
+    return response as IDepinSignResponse;
+  }
+
+  /**
+   * Decrypt a full serialized CDepinMessage addressed to this device, returning
+   * the plaintext base64-encoded. GCM-authenticated; the sender's signature is
+   * verified host-side (it needs the sender's on-chain pubkey). Returns a
+   * `not_for_us` device error if this identity is not among the recipients.
+   * Requires an active session and the `depin_message` capability.
+   *
+   * @param depinMessageHex Hex of the complete serialized CDepinMessage.
+   */
+  async depinDecrypt(depinMessageHex: string): Promise<IDepinDecryptResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "depin_decrypt", depin_message: depinMessageHex },
+      35000
+    );
+    this.assertSuccess(response);
+    return response as IDepinDecryptResponse;
+  }
+
+  /**
+   * End the current DePIN session: auto-sign/decrypt stops and the identity is
+   * no longer revealed until a new {@link depinSessionBegin} approval. Safe to
+   * call with no active session.
+   */
+  async depinSessionEnd(): Promise<void> {
+    const response = await this.serial.sendCommand(
+      { action: "depin_session_end" },
+      10000
+    );
+    this.assertSuccess(response);
   }
 
   async signPsbt(
