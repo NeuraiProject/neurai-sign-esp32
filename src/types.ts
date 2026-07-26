@@ -292,6 +292,14 @@ export interface IDepinDecryptResponse {
   op_count: number;
 }
 
+export interface IDepinSignDigestResponse {
+  status: string;
+  /** DER signature over the digest (no sighash-type byte; append it host-side). */
+  signature: string;
+  /** Compressed secp256k1 DePIN public key (33 bytes), hex — for the scriptSig. */
+  pubkey: string;
+}
+
 export interface IErrorResponse {
   status: "error";
   message: string;
@@ -315,6 +323,7 @@ export type DeviceResponse =
   | IDepinIdentityResponse
   | IDepinSignResponse
   | IDepinDecryptResponse
+  | IDepinSignDigestResponse
   | IErrorResponse
   | IProcessingResponse;
 

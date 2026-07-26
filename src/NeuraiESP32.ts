@@ -35,6 +35,7 @@ import type {
   IDepinDecryptResponse,
   IDepinIdentityResponse,
   IDepinSessionResponse,
+  IDepinSignDigestResponse,
   IDepinSignResponse,
   IDeviceInfo,
   IErrorResponse,
@@ -394,6 +395,27 @@ export class NeuraiESP32 {
     );
     this.assertSuccess(response);
     return response as IDepinDecryptResponse;
+  }
+
+  /**
+   * Sign a 32-byte digest with the DePIN key (account 100'). The device ALWAYS
+   * asks for an explicit physical confirmation — this signature can move the
+   * DePIN address's XNA. Used to spend from the DePIN address, notably the
+   * pubkey-reveal burn that publishes the account-100 pubkey on-chain (so other
+   * chat members can encrypt group messages to this identity). The host builds
+   * the transaction, computes each input's legacy sighash, calls this per input,
+   * and assembles the P2PKH scriptSig from `signature` (append the sighash-type
+   * byte) + `pubkey`. Requires the device unlocked; not session-gated.
+   *
+   * @param digestHex 32-byte digest (the tx sighash), hex.
+   */
+  async depinSignDigest(digestHex: string): Promise<IDepinSignDigestResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "depin_sign_digest", digest: digestHex },
+      35000
+    );
+    this.assertSuccess(response);
+    return response as IDepinSignDigestResponse;
   }
 
   /**

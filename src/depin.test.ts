@@ -243,6 +243,30 @@ describe("depinDecryptPayload", () => {
   });
 });
 
+describe("depinSignDigest", () => {
+  it("sends the digest and returns the DER signature + pubkey", async () => {
+    const { transport, sent } = createMockTransport([
+      { status: "success", signature: "3044021f00", pubkey: PUBKEY },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    const res = await device.depinSignDigest("ab".repeat(32));
+
+    expect(res.signature).toBe("3044021f00");
+    expect(res.pubkey).toBe(PUBKEY);
+    expect(sent[0]).toEqual({ action: "depin_sign_digest", digest: "ab".repeat(32) });
+  });
+
+  it("surfaces a declined confirmation", async () => {
+    const { transport } = createMockTransport([
+      { status: "error", message: "user_declined" },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    await expect(device.depinSignDigest("00".repeat(32))).rejects.toThrow("user_declined");
+  });
+});
+
 describe("depinSessionEnd", () => {
   it("sends depin_session_end and resolves on success", async () => {
     const { transport, sent } = createMockTransport([

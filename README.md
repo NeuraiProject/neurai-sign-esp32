@@ -579,6 +579,7 @@ using JSON messages. Supported commands:
 | `sign_message` | Physical button | 30s |
 | `depin_session_begin` | Physical button (channel token on screen) | 30s |
 | `get_depin_identity` | None (session-gated) | 10s |
+| `depin_sign_digest` | Physical button | 30s |
 | `depin_sign` | None (session-gated, rate-limited) | 30s |
 | `depin_decrypt` | None (session-gated, rate-limited) | 30s |
 | `depin_decrypt_payload` | None (session-gated, rate-limited) | 30s |
@@ -618,6 +619,7 @@ Main class for device interaction.
 | `depinSign(params)` | Sign a DePIN message on-device (DER over the canonical CDepinMessage); session-gated, rate-limited |
 | `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated |
 | `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated |
+| `depinSignDigest(digestHex)` | Sign a tx sighash with the DePIN key (account 100') → `{ signature, pubkey }`; physical confirmation, for the pubkey-reveal burn |
 | `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |
 | `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |
 | `signPqTransaction(opts)` | Spend from a PQ address: build raw tx + sign via `sign_tx` (used internally by `signTransaction` in PQ mode) |
