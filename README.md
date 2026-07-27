@@ -211,6 +211,10 @@ decryption happen **on the chip**.
 
 Feature-detect first — `ping()` advertises `capabilities`: `"depin_identity"`
 (identity + session) and `"depin_message"` (on-device `depinSign`/`depinDecrypt`).
+Firmware 0.5.11 also advertises `"depin_bulk_decrypt_b64"` and
+`depin_max_decrypt_bytes` (currently 32768). This library negotiates those
+automatically on the first decrypt: it preserves the public hex API, but sends
+valid inputs in Base64 when supported, avoiding hex's 2× serial expansion.
 
 ```javascript
 const { capabilities = [] } = await device.ping();
@@ -244,6 +248,11 @@ const { signature, op_count } = await device.depinSign({
 // 4) Decrypt an incoming CDepinMessage addressed to this identity.
 //    GCM-authenticated; the sender's signature is verified host-side.
 const { plaintext_b64 } = await device.depinDecrypt(cdepinMessageHex);
+
+// For a privacy-wrapped server response { encrypted: "<hex>" }, decrypt the
+// bare ECIES payload. Oversize payloads are rejected locally with a clear
+// error; paginate the server response instead of risking a device reset.
+const result = await device.depinDecryptPayload(encryptedPayloadHex);
 
 // 5) End the session when done (also revoked on lock / USB disconnect / timeout).
 await device.depinSessionEnd();
@@ -617,8 +626,8 @@ Main class for device interaction.
 | `depinSessionBegin(token, opts?)` | Open a DePIN chat session on a channel token (one approval); enables identity read + auto sign/decrypt |
 | `getDepinIdentity()` | Read the DePIN chat identity (address + pubkey + path); session-gated, no per-call prompt |
 | `depinSign(params)` | Sign a DePIN message on-device (DER over the canonical CDepinMessage); session-gated, rate-limited |
-| `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated |
-| `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated |
+| `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ |
+| `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ and rejects data above its announced limit |
 | `depinSignDigest(digestHex)` | Sign a tx sighash with the DePIN key (account 100') → `{ signature, pubkey }`; physical confirmation, for the pubkey-reveal burn |
 | `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |
 | `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |

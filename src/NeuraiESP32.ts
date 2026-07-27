@@ -19,6 +19,7 @@
  */
 
 import { SerialConnection } from "./serial.js";
+import { Buffer } from "buffer";
 import { buildPSBT, finalizeSignedPSBT } from "./psbt.js";
 import {
   DEFAULT_WITNESS_SCRIPT_HEX,
@@ -60,6 +61,8 @@ import type {
 export class NeuraiESP32 {
   private serial: INeuraiTransport;
   private deviceInfo: IDeviceInfo | null = null;
+  private pingInfo: IPingResponse | null = null;
+  private depinCapabilityHandshake: Promise<IPingResponse | null> | null = null;
 
   /**
    * @param options Pass `{ transport }` to drive the device over a custom
@@ -88,6 +91,8 @@ export class NeuraiESP32 {
 
   async disconnect(): Promise<void> {
     this.deviceInfo = null;
+    this.pingInfo = null;
+    this.depinCapabilityHandshake = null;
     await this.serial.close();
   }
 
@@ -106,7 +111,8 @@ export class NeuraiESP32 {
     const response = await this.serial.sendCommand({ action: "ping" }, 5000);
 
     this.assertSuccess(response);
-    return response as IPingResponse;
+    this.pingInfo = response as IPingResponse;
+    return this.pingInfo;
   }
 
   /**
@@ -368,11 +374,22 @@ export class NeuraiESP32 {
    * `not_for_us` device error if this identity is not among the recipients.
    * Requires an active session and the `depin_message` capability.
    *
+   * The library negotiates `depin_bulk_decrypt_b64` on first use. On firmware
+   * that advertises it, valid hex input is sent as Base64 to avoid hex's 2x
+   * expansion; older firmware continues to receive the legacy hex field.
+   *
    * @param depinMessageHex Hex of the complete serialized CDepinMessage.
    */
   async depinDecrypt(depinMessageHex: string): Promise<IDepinDecryptResponse> {
     const response = await this.serial.sendCommand(
-      { action: "depin_decrypt", depin_message: depinMessageHex },
+      {
+        action: "depin_decrypt",
+        ...(await this.depinDecryptWirePayload(
+          "depin_message",
+          "depin_message_b64",
+          depinMessageHex
+        )),
+      },
       35000
     );
     this.assertSuccess(response);
@@ -387,14 +404,79 @@ export class NeuraiESP32 {
    * message (the common case for a chat client). Returns the plaintext
    * base64-encoded, or a `not_for_us` device error if not a recipient.
    * Requires an active session and the `depin_message` capability.
+   * On firmware supporting `depin_bulk_decrypt_b64`, valid hex input is sent
+   * in Base64 and checked against `depin_max_decrypt_bytes` before USB I/O.
    */
   async depinDecryptPayload(encryptedPayloadHex: string): Promise<IDepinDecryptResponse> {
     const response = await this.serial.sendCommand(
-      { action: "depin_decrypt_payload", encrypted_payload: encryptedPayloadHex },
+      {
+        action: "depin_decrypt_payload",
+        ...(await this.depinDecryptWirePayload(
+          "encrypted_payload",
+          "encrypted_payload_b64",
+          encryptedPayloadHex
+        )),
+      },
       35000
     );
     this.assertSuccess(response);
     return response as IDepinDecryptResponse;
+  }
+
+  /**
+   * Return the safest encoding the connected firmware has explicitly
+   * advertised. The one-time, confirmation-free ping keeps the public DePIN
+   * API backwards compatible: old firmware still gets its original hex field.
+   */
+  private async getDepinBulkCapability(): Promise<IPingResponse | null> {
+    if (this.pingInfo) return this.pingInfo;
+    if (!this.depinCapabilityHandshake) {
+      this.depinCapabilityHandshake = this.ping().catch(() => null);
+    }
+    return this.depinCapabilityHandshake;
+  }
+
+  /**
+   * Build the decrypt field for the negotiated firmware. Invalid hex is left
+   * untouched so existing callers receive the firmware's normal validation
+   * error instead of a new client-side parsing error.
+   */
+  private async depinDecryptWirePayload(
+    hexField: string,
+    base64Field: string,
+    hexPayload: string
+  ): Promise<Record<string, string>> {
+    const capability = await this.getDepinBulkCapability();
+    const maxBytes = capability?.depin_max_decrypt_bytes;
+    const supportsBase64 =
+      capability?.capabilities?.includes("depin_bulk_decrypt_b64") === true &&
+      Number.isSafeInteger(maxBytes) &&
+      (maxBytes as number) > 0;
+
+    // Preserve the legacy firmware validation path for malformed hex.
+    if (!/^[0-9a-fA-F]*$/.test(hexPayload) || hexPayload.length % 2 !== 0) {
+      return { [hexField]: hexPayload };
+    }
+
+    const bytes = Buffer.from(hexPayload, "hex");
+    if (supportsBase64) {
+      if (bytes.length > (maxBytes as number)) {
+        throw new RangeError(
+          `DePIN decrypt payload is ${bytes.length} bytes; this device accepts at most ${maxBytes} bytes. Paginate the response before decrypting it.`
+        );
+      }
+      return { [base64Field]: bytes.toString("base64") };
+    }
+
+    // A 48 KiB serial line leaves roughly 24 KiB for hex before JSON framing.
+    // Do not send a known-unsafe legacy request that could destabilize a device.
+    const legacyMaxBytes = 24 * 1024 - 256;
+    if (bytes.length > legacyMaxBytes) {
+      throw new RangeError(
+        `DePIN decrypt payload is ${bytes.length} bytes and exceeds the ${legacyMaxBytes}-byte legacy hex transport limit. Update the firmware or paginate the response.`
+      );
+    }
+    return { [hexField]: hexPayload };
   }
 
   /**

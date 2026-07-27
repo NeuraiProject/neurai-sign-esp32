@@ -190,8 +190,17 @@ describe("depinSign", () => {
 });
 
 describe("depinDecrypt", () => {
-  it("sends the CDepinMessage hex and returns the base64 plaintext", async () => {
+  it("uses Base64 when the firmware advertises bulk DePIN decrypt", async () => {
     const { transport, sent } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.11",
+        firmware_version: "0.5.11",
+        chip: "ESP32",
+        capabilities: ["depin_message", "depin_bulk_decrypt_b64"],
+        depin_max_decrypt_bytes: 32768,
+      },
       { status: "success", plaintext_b64: "aGVsbG8=", op_count: 2 },
     ]);
     const device = new NeuraiESP32({ transport });
@@ -200,14 +209,22 @@ describe("depinDecrypt", () => {
 
     expect(res.plaintext_b64).toBe("aGVsbG8=");
     expect(res.op_count).toBe(2);
-    expect(sent[0]).toEqual({
+    expect(sent[0]).toEqual({ action: "ping" });
+    expect(sent[1]).toEqual({
       action: "depin_decrypt",
-      depin_message: "deadbeefcafe",
+      depin_message_b64: "3q2+78r+",
     });
   });
 
   it("surfaces not_for_us when this identity is not a recipient", async () => {
     const { transport } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.10",
+        firmware_version: "0.5.10",
+        chip: "ESP32",
+      },
       { status: "error", message: "not_for_us" },
     ]);
     const device = new NeuraiESP32({ transport });
@@ -217,8 +234,17 @@ describe("depinDecrypt", () => {
 });
 
 describe("depinDecryptPayload", () => {
-  it("sends the bare ECIES payload and returns the base64 plaintext", async () => {
+  it("uses Base64 and the advertised byte limit for a bare ECIES payload", async () => {
     const { transport, sent } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.11",
+        firmware_version: "0.5.11",
+        chip: "ESP32",
+        capabilities: ["depin_message", "depin_bulk_decrypt_b64"],
+        depin_max_decrypt_bytes: 32768,
+      },
       { status: "success", plaintext_b64: "aGk=", op_count: 3 },
     ]);
     const device = new NeuraiESP32({ transport });
@@ -227,7 +253,49 @@ describe("depinDecryptPayload", () => {
 
     expect(res.plaintext_b64).toBe("aGk=");
     expect(res.op_count).toBe(3);
-    expect(sent[0]).toEqual({
+    expect(sent[0]).toEqual({ action: "ping" });
+    expect(sent[1]).toEqual({
+      action: "depin_decrypt_payload",
+      encrypted_payload_b64: "yv66vg==",
+    });
+  });
+
+  it("rejects locally when the decoded payload exceeds the advertised limit", async () => {
+    const { transport, sent } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.11",
+        firmware_version: "0.5.11",
+        chip: "ESP32",
+        capabilities: ["depin_bulk_decrypt_b64"],
+        depin_max_decrypt_bytes: 4,
+      },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    await expect(device.depinDecryptPayload("00".repeat(5))).rejects.toThrow(
+      "accepts at most 4 bytes"
+    );
+    expect(sent).toEqual([{ action: "ping" }]);
+  });
+
+  it("keeps the hex field for firmware without the Base64 capability", async () => {
+    const { transport, sent } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.10",
+        firmware_version: "0.5.10",
+        chip: "ESP32",
+      },
+      { status: "success", plaintext_b64: "aGk=", op_count: 3 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    await device.depinDecryptPayload("cafebabe");
+
+    expect(sent[1]).toEqual({
       action: "depin_decrypt_payload",
       encrypted_payload: "cafebabe",
     });
@@ -235,6 +303,13 @@ describe("depinDecryptPayload", () => {
 
   it("surfaces not_for_us when this identity is not a recipient", async () => {
     const { transport } = createMockTransport([
+      {
+        status: "success",
+        device: "NeuraiHW",
+        version: "0.5.10",
+        firmware_version: "0.5.10",
+        chip: "ESP32",
+      },
       { status: "error", message: "not_for_us" },
     ]);
     const device = new NeuraiESP32({ transport });

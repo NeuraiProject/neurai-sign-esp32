@@ -121,6 +121,13 @@ export interface IPingResponse {
    * Absent on firmware predating capability negotiation.
    */
   capabilities?: string[];
+  /**
+   * Maximum decoded byte length accepted by the firmware for a DePIN decrypt
+   * request. Present together with the `depin_bulk_decrypt_b64` capability.
+   * The library uses it before serializing a large payload, so an oversize
+   * request is rejected locally instead of risking an ESP32 reset.
+   */
+  depin_max_decrypt_bytes?: number;
 }
 
 export interface IDeviceInfo {
