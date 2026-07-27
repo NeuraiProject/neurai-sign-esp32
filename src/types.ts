@@ -262,6 +262,13 @@ export interface IDepinSessionResponse {
   session: boolean;
   /** Channel token the session is scoped to (soulbound `&…` asset name). */
   token: string;
+  /**
+   * Per-session capability key (proto v2, hex), returned ONCE. Every
+   * session-scoped op must echo it back; the library caches and attaches it
+   * automatically. Absent on proto-v1 firmware. Treat as a secret: store in the
+   * OS keystore, never in plain prefs or logs.
+   */
+  session_key?: string;
   /** Idle expiry in seconds: the session ends after this long without activity. */
   expires_in_s: number;
   /** Hard cap in seconds regardless of activity. */
@@ -269,6 +276,17 @@ export interface IDepinSessionResponse {
   /** In-session sign/decrypt rate cap, operations per minute. */
   rate_per_min: number;
   protocol_version: number;
+}
+
+/** Reply to `depin_session_status` (proto v2). */
+export interface IDepinSessionStatusResponse {
+  status: string;
+  /** True only when a live session exists AND the supplied key matched. */
+  active: boolean;
+  /** Channel token, present when `active`. */
+  token?: string;
+  /** Seconds until expiry (min of idle and hard-cap deadlines), when `active`. */
+  expires_in_s?: number;
 }
 
 export interface IDepinIdentityResponse {
@@ -327,6 +345,7 @@ export type DeviceResponse =
   | ISignMessageResponse
   | ISetupSeedResponse
   | IDepinSessionResponse
+  | IDepinSessionStatusResponse
   | IDepinIdentityResponse
   | IDepinSignResponse
   | IDepinDecryptResponse

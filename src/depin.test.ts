@@ -353,3 +353,101 @@ describe("depinSessionEnd", () => {
     expect(sent[0]).toEqual({ action: "depin_session_end" });
   });
 });
+
+describe("session capability key (proto v2)", () => {
+  const SKEY = "00112233445566778899aabbccddeeff";
+  const beginReply = {
+    status: "success",
+    session: true,
+    token: TOKEN,
+    session_key: SKEY,
+    expires_in_s: 900,
+    max_session_s: 3600,
+    rate_per_min: 100,
+    protocol_version: 2,
+  };
+
+  it("caches the key from begin and auto-attaches it to session ops", async () => {
+    // depinSign and getDepinIdentity issue no internal ping, so the queue maps
+    // 1:1 to the calls. depin_decrypt* attaches the same `session_key` spread.
+    const { transport, sent } = createMockTransport([
+      beginReply,
+      { status: "success", signature: "30", op_count: 1 },
+      { status: "success", address: ADDRESS, pubkey: PUBKEY, path: "m/44'/1'/100'/0/0", network: "xna-test", protocol_version: 2 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    const begin = await device.depinSessionBegin(TOKEN);
+    expect(begin.session_key).toBe(SKEY);
+    expect(device.getDepinSessionKey()).toBe(SKEY);
+    expect(sent[0].session_key).toBeUndefined(); // begin itself doesn't send it
+
+    await device.depinSign({ token: TOKEN, sender: ADDRESS, timestamp: 1, messageType: 1, encryptedPayload: "00" });
+    await device.getDepinIdentity();
+
+    expect(sent[1].session_key).toBe(SKEY);
+    expect(sent[2].session_key).toBe(SKEY);
+  });
+
+  it("does not attach a key when none is cached (proto v1 firmware)", async () => {
+    const { transport, sent } = createMockTransport([
+      { status: "success", address: ADDRESS, pubkey: PUBKEY, path: "m/44'/1'/100'/0/0", network: "xna-test", protocol_version: 1 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+
+    await device.getDepinIdentity();
+    expect(sent[0]).toEqual({ action: "get_depin_identity" });
+  });
+
+  it("depinSessionStatus reports active and keeps the key", async () => {
+    const { transport, sent } = createMockTransport([
+      beginReply,
+      { status: "success", active: true, token: TOKEN, expires_in_s: 800 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+    await device.depinSessionBegin(TOKEN);
+
+    const st = await device.depinSessionStatus();
+    expect(st.active).toBe(true);
+    expect(st.token).toBe(TOKEN);
+    expect(sent[1]).toEqual({ action: "depin_session_status", session_key: SKEY });
+    expect(device.getDepinSessionKey()).toBe(SKEY);
+  });
+
+  it("depinSessionStatus clears the cached key when inactive", async () => {
+    const { transport } = createMockTransport([
+      beginReply,
+      { status: "success", active: false },
+    ]);
+    const device = new NeuraiESP32({ transport });
+    await device.depinSessionBegin(TOKEN);
+
+    const st = await device.depinSessionStatus();
+    expect(st.active).toBe(false);
+    expect(device.getDepinSessionKey()).toBeNull();
+  });
+
+  it("setDepinSessionKey restores a persisted key for a fresh instance", async () => {
+    const { transport, sent } = createMockTransport([
+      { status: "success", active: true, token: TOKEN, expires_in_s: 500 },
+    ]);
+    const device = new NeuraiESP32({ transport });
+    device.setDepinSessionKey(SKEY);
+
+    await device.depinSessionStatus();
+    expect(sent[0]).toEqual({ action: "depin_session_status", session_key: SKEY });
+  });
+
+  it("depinSessionEnd sends the key and forgets it locally", async () => {
+    const { transport, sent } = createMockTransport([
+      beginReply,
+      { status: "success" } as DeviceResponse,
+    ]);
+    const device = new NeuraiESP32({ transport });
+    await device.depinSessionBegin(TOKEN);
+
+    await device.depinSessionEnd();
+    expect(sent[1]).toEqual({ action: "depin_session_end", session_key: SKEY });
+    expect(device.getDepinSessionKey()).toBeNull();
+  });
+});

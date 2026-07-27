@@ -592,7 +592,8 @@ using JSON messages. Supported commands:
 | `depin_sign` | None (session-gated, rate-limited) | 30s |
 | `depin_decrypt` | None (session-gated, rate-limited) | 30s |
 | `depin_decrypt_payload` | None (session-gated, rate-limited) | 30s |
-| `depin_session_end` | None | 10s |
+| `depin_session_status` | None (session-key gated) | 10s |
+| `depin_session_end` | None (session-key gated) | 10s |
 
 `info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
 returns only the public key (the library derives the address) and signing uses
@@ -629,6 +630,8 @@ Main class for device interaction.
 | `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ |
 | `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ and rejects data above its announced limit |
 | `depinSignDigest(digestHex)` | Sign a tx sighash with the DePIN key (account 100') → `{ signature, pubkey }`; physical confirmation, for the pubkey-reveal burn |
+| `depinSessionStatus()` | Check whether the cached/`setDepinSessionKey` key still names a live session → `{ active, token?, expires_in_s? }` (proto v2) |
+| `getDepinSessionKey()` / `setDepinSessionKey(key)` | Read / restore the per-session capability key (persist it in the OS keystore across restarts) |
 | `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |
 | `signTransaction(opts)` | Build + sign + finalize in one call; auto-routes legacy (PSBT) vs PQ (`sign_tx`) by device mode |
 | `signPqTransaction(opts)` | Spend from a PQ address: build raw tx + sign via `sign_tx` (used internally by `signTransaction` in PQ mode) |

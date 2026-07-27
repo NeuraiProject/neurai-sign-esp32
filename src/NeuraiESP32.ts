@@ -36,6 +36,7 @@ import type {
   IDepinDecryptResponse,
   IDepinIdentityResponse,
   IDepinSessionResponse,
+  IDepinSessionStatusResponse,
   IDepinSignDigestResponse,
   IDepinSignResponse,
   IDeviceInfo,
@@ -63,6 +64,11 @@ export class NeuraiESP32 {
   private deviceInfo: IDeviceInfo | null = null;
   private pingInfo: IPingResponse | null = null;
   private depinCapabilityHandshake: Promise<IPingResponse | null> | null = null;
+  // Per-session capability key (proto v2): cached from depinSessionBegin and
+  // auto-attached to every session-scoped command so callers don't thread it.
+  // Persist it across process restarts with get/setDepinSessionKey (store it in
+  // the OS keystore, never plain prefs or logs).
+  private depinSessionKey: string | null = null;
 
   /**
    * @param options Pass `{ transport }` to drive the device over a custom
@@ -316,7 +322,30 @@ export class NeuraiESP32 {
     // Waits on a physical approval (up to ~30 s), like getInfo/getAddress.
     const response = await this.serial.sendCommand(command, 35000);
     this.assertSuccess(response);
-    return response as IDepinSessionResponse;
+    const session = response as IDepinSessionResponse;
+    // Cache the capability key (proto v2) so it rides subsequent ops; undefined
+    // on proto-v1 firmware, which simply doesn't require it.
+    this.depinSessionKey = session.session_key ?? null;
+    return session;
+  }
+
+  /** The capability key cached from the last {@link depinSessionBegin} (or null). */
+  getDepinSessionKey(): string | null {
+    return this.depinSessionKey;
+  }
+
+  /**
+   * Restore a capability key saved from a previous run (e.g. from the OS
+   * keystore) so a fresh instance can resume a session without re-prompting.
+   * Pair with {@link depinSessionStatus} to confirm it is still valid.
+   */
+  setDepinSessionKey(key: string | null): void {
+    this.depinSessionKey = key;
+  }
+
+  /** Session-key field spread into session-scoped commands (empty on proto v1). */
+  private depinSessionFields(): Record<string, unknown> {
+    return this.depinSessionKey ? { session_key: this.depinSessionKey } : {};
   }
 
   /**
@@ -327,7 +356,7 @@ export class NeuraiESP32 {
    */
   async getDepinIdentity(): Promise<IDepinIdentityResponse> {
     const response = await this.serial.sendCommand(
-      { action: "get_depin_identity" },
+      { action: "get_depin_identity", ...this.depinSessionFields() },
       10000
     );
     this.assertSuccess(response);
@@ -360,6 +389,7 @@ export class NeuraiESP32 {
         timestamp: params.timestamp,
         message_type: params.messageType,
         encrypted_payload: params.encryptedPayload,
+        ...this.depinSessionFields(),
       },
       35000
     );
@@ -389,6 +419,7 @@ export class NeuraiESP32 {
           "depin_message_b64",
           depinMessageHex
         )),
+        ...this.depinSessionFields(),
       },
       35000
     );
@@ -416,6 +447,7 @@ export class NeuraiESP32 {
           "encrypted_payload_b64",
           encryptedPayloadHex
         )),
+        ...this.depinSessionFields(),
       },
       35000
     );
@@ -503,14 +535,36 @@ export class NeuraiESP32 {
   /**
    * End the current DePIN session: auto-sign/decrypt stops and the identity is
    * no longer revealed until a new {@link depinSessionBegin} approval. Safe to
-   * call with no active session.
+   * call with no active session. On proto-v2 firmware only the holder of the
+   * capability key can end the session; this attaches the cached key, then
+   * forgets it locally regardless of the outcome.
    */
   async depinSessionEnd(): Promise<void> {
     const response = await this.serial.sendCommand(
-      { action: "depin_session_end" },
+      { action: "depin_session_end", ...this.depinSessionFields() },
+      10000
+    );
+    this.depinSessionKey = null;
+    this.assertSuccess(response);
+  }
+
+  /**
+   * Ask the device whether the cached (or {@link setDepinSessionKey}-restored)
+   * capability key still names a live session — proto v2, gated by
+   * `depin_session_key`. Lets a host that persisted its key skip re-prompting
+   * the user after a restart while the device is still in DePIN mode. Without a
+   * valid key the device replies `{ active: false }` and reveals nothing, so it
+   * is not an information leak. Clears the cached key when the session is gone.
+   */
+  async depinSessionStatus(): Promise<IDepinSessionStatusResponse> {
+    const response = await this.serial.sendCommand(
+      { action: "depin_session_status", ...this.depinSessionFields() },
       10000
     );
     this.assertSuccess(response);
+    const status = response as IDepinSessionStatusResponse;
+    if (!status.active) this.depinSessionKey = null;
+    return status;
   }
 
   async signPsbt(
