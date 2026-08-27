@@ -1,6 +1,6 @@
 {
   "name": "@neuraiproject/neurai-sign-esp32",
-  "version": "0.5.12",
+  "version": "0.6.0",
   "description": "Create and sign PSBTs for Neurai via ESP32 hardware wallet",
   "type": "module",
   "main": "dist/index.cjs",
@@ -58,7 +58,7 @@
     "varuint-bitcoin": "2.0.0"
   },
   "devDependencies": {
-    "@neuraiproject/neurai-depin-msg": "file:../neurai-depin-msg",
+    "@neuraiproject/neurai-depin-msg": "^3.1.0",
     "@noble/post-quantum": "^0.6.1",
     "@rollup/plugin-commonjs": "^28.0.6",
     "@rollup/plugin-node-resolve": "^16.0.1",

@@ -345,10 +345,11 @@ await identity.session.ensure({ minRemainingSeconds: 60 });
 > `depin_sign_auth` and session permissions are **not implemented in current
 > firmware yet** — the contract they must satisfy is specified, and exercised
 > by a cryptographically faithful device mock, in this package's tests.
-> Until `@neuraiproject/neurai-depin-msg@3.1.0` is published, this repository
-> uses the sibling checkout for integration tests. The package has no runtime
-> dependency on `neurai-depin-msg`; the package gate validates the adapter from
-> a clean `neurai-sign-esp32` tarball.
+> `@neuraiproject/neurai-depin-msg@3.1.0` must be published before installing
+> this repository from scratch or publishing `neurai-sign-esp32@0.6.0`. The
+> package has no runtime dependency on `neurai-depin-msg`; it is a `^3.1.0`
+> development dependency used only by the integration tests. The package gate
+> validates the adapter from a clean `neurai-sign-esp32` tarball.
 
 ### Provision an unconfigured device (`setup_seed`)
 
