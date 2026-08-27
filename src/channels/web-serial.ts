@@ -6,9 +6,9 @@
  * writes, line buffering, JSON parsing, timeouts) lives in {@link SerialProtocol}.
  */
 
-import type { IByteChannel, ISerialOptions } from "../types.js";
+import type { IByteChannel, ISerialOptions, ISerialPortFilter } from "../types.js";
 
-const DEFAULT_FILTERS: SerialPortFilter[] = [
+const DEFAULT_FILTERS: ISerialPortFilter[] = [
   { usbVendorId: 0x303a, usbProductId: 0x1001 },
   { usbVendorId: 0x303a },
   { usbVendorId: 0x10c4, usbProductId: 0xea60 },
@@ -27,7 +27,7 @@ export class WebSerialByteChannel implements IByteChannel {
   private handler: ((chunk: Uint8Array) => void) | null = null;
   private reading = false;
   private baudRate: number;
-  private filters: SerialPortFilter[];
+  private filters: ISerialPortFilter[];
 
   constructor(options?: ISerialOptions) {
     this.baudRate = options?.baudRate ?? DEFAULT_BAUD_RATE;

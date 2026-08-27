@@ -1,4 +1,10 @@
 import { NeuraiESP32 } from "./NeuraiESP32.js";
+import {
+  createDepinDeviceIdentity,
+  DepinDeviceIdentityError,
+  derSignatureToRecoverable,
+  neuraiSignedMessageDigest,
+} from "./depin-identity.js";
 import { buildAssetTransferDisplayMetadata } from "./display.js";
 import {
   getNetwork,
@@ -40,6 +46,10 @@ import { SerialConnection } from "./serial.js";
 
 const api = {
   NeuraiESP32,
+  createDepinDeviceIdentity,
+  DepinDeviceIdentityError,
+  derSignatureToRecoverable,
+  neuraiSignedMessageDigest,
   SerialConnection,
   buildPSBT,
   buildPSBTFromRawTransaction,

@@ -402,7 +402,7 @@ describe("session capability key (proto v2)", () => {
   it("depinSessionStatus reports active and keeps the key", async () => {
     const { transport, sent } = createMockTransport([
       beginReply,
-      { status: "success", active: true, token: TOKEN, expires_in_s: 800 },
+      { status: "success", active: true, token: TOKEN, expires_in_s: 800, permissions: ["receive"] },
     ]);
     const device = new NeuraiESP32({ transport });
     await device.depinSessionBegin(TOKEN);
@@ -429,7 +429,7 @@ describe("session capability key (proto v2)", () => {
 
   it("setDepinSessionKey restores a persisted key for a fresh instance", async () => {
     const { transport, sent } = createMockTransport([
-      { status: "success", active: true, token: TOKEN, expires_in_s: 500 },
+      { status: "success", active: true, token: TOKEN, expires_in_s: 500, permissions: ["receive"] },
     ]);
     const device = new NeuraiESP32({ transport });
     device.setDepinSessionKey(SKEY);

@@ -37,8 +37,10 @@ import type {
   IDepinIdentityResponse,
   IDepinSessionResponse,
   IDepinSessionStatusResponse,
+  IDepinSignAuthResponse,
   IDepinSignDigestResponse,
   IDepinSignResponse,
+  DepinSignAuthCommand,
   IDeviceInfo,
   IErrorResponse,
   INeuraiTransport,
@@ -533,19 +535,51 @@ export class NeuraiESP32 {
   }
 
   /**
+   * Sign a protocol-2 AUTHENTICATION preimage with the DePIN key, under the
+   * active session. The device is given the STRUCTURED fields, never a free
+   * digest: it rebuilds `DEPIN-REQ|…`, `DEPIN-GET|…` or `DEPIN-CLEAR|…` and the
+   * Neurai signed-message envelope itself, checks them against the session's
+   * token and permissions, and only then signs. That is what makes this safe to
+   * automate, unlike {@link depinSignDigest}, which accepts an arbitrary hash
+   * (possibly a transaction sighash) and therefore always asks for a physical
+   * confirmation and is NOT session-gated.
+   *
+   * The reply carries a DER signature; the recoverable 65-byte form the
+   * protocol needs is derived and verified host-side (see
+   * `createDepinDeviceIdentity`).
+   *
+   * Requires firmware advertising `depin_auth_sign` (see {@link ping}).
+   */
+  async depinSignAuth(
+    command: DepinSignAuthCommand
+  ): Promise<IDepinSignAuthResponse> {
+    const response = await this.serial.sendCommand(
+      {
+        action: "depin_sign_auth",
+        ...command,
+        ...this.depinSessionFields(),
+      },
+      35000
+    );
+    this.assertSuccess(response);
+    return response as IDepinSignAuthResponse;
+  }
+
+  /**
    * End the current DePIN session: auto-sign/decrypt stops and the identity is
    * no longer revealed until a new {@link depinSessionBegin} approval. Safe to
    * call with no active session. On proto-v2 firmware only the holder of the
-   * capability key can end the session; this attaches the cached key, then
-   * forgets it locally regardless of the outcome.
+   * capability key can end the session; this attaches the cached key and only
+   * forgets it locally after the device confirms revocation. On failure the key
+   * is retained so the caller can retry instead of orphaning a live session.
    */
   async depinSessionEnd(): Promise<void> {
     const response = await this.serial.sendCommand(
       { action: "depin_session_end", ...this.depinSessionFields() },
       10000
     );
-    this.depinSessionKey = null;
     this.assertSuccess(response);
+    this.depinSessionKey = null;
   }
 
   /**

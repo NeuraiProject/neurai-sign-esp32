@@ -49,6 +49,8 @@ For classic HTML pages without ESM imports, load the global bundle:
 <script src="./dist/NeuraiSignESP32.global.js"></script>
 <script>
   const device = new window.NeuraiSignESP32.NeuraiESP32();
+  // The IIFE exposes the DePIN adapter too:
+  // window.NeuraiSignESP32.createDepinDeviceIdentity(device, options)
 </script>
 ```
 
@@ -261,6 +263,92 @@ await device.depinSessionEnd();
 > **Note on time:** the device has no real-time clock, so it does **not** check
 > the freshness of `timestamp` — the host supplies it and the chip only validates
 > the message structure and channel/sender scope.
+
+### DePIN protocol 2: use the device as a messaging identity
+
+The calls above are the raw device commands. For the full **DePIN Messaging
+Protocol 2** flows (challenge → receive → publish → purge) there is an adapter
+that turns the device into an identity consumable by
+[`@neuraiproject/neurai-depin-msg`](https://www.npmjs.com/package/@neuraiproject/neurai-depin-msg)
+`>= 3.1.0`, without the private key ever leaving the chip:
+
+```javascript
+import { createDepinDeviceIdentity } from "@neuraiproject/neurai-sign-esp32";
+import { requestDepinChallenge, receiveDepinMessages } from "@neuraiproject/neurai-depin-msg";
+
+// Opens (or reuses) a session for the token and validates the announced
+// identity against the network you expect. ONE physical approval.
+const identity = await createDepinDeviceIdentity(device, {
+  token: "&NEURAI.CHAT",
+  expectedNetwork: "test",                      // must match the app's network
+  sessionPermissions: ["receive", "publish"],   // default: ["receive"]
+  ttlMinutes: 15,
+});
+
+// From here it is an ordinary depin-msg identity.
+const challenge = await requestDepinChallenge({
+  rpc, identity, token: "&NEURAI.CHAT", poolPublicKey,
+});
+const page = await receiveDepinMessages({
+  rpc, identity, token: "&NEURAI.CHAT", challenge: challenge.challenge,
+  poolPublicKey, network: "test", limit: 25,
+});
+```
+
+**Session permissions.** They are independent capabilities, because a session
+approved for reading must not be able to publish in the owner's name or purge
+the pool:
+
+| Permission | Authorises |
+| --- | --- |
+| `receive` | `DEPIN-REQ` (type `receive`) and `DEPIN-GET` — reading |
+| `publish` | `depin_sign` — publishing messages |
+| `admin` | `DEPIN-REQ` (type `admin`) and `DEPIN-CLEAR` — purging |
+
+Decryption is inherent to **any** live session, so say so when asking for
+approval. An omitted list grants only `["receive"]`, never `admin`. Requesting
+a different set than the device granted fails instead of silently reusing a
+more privileged session. And `admin` implies a *total* purge: the `mode`
+argument of `depinclearmsg` is not part of the signed `DEPIN-CLEAR` preimage,
+so a purge signature cannot be narrowed after the fact.
+
+**Why not `depinSignDigest`.** That command signs an arbitrary 32-byte hash —
+possibly a transaction sighash — which is exactly why it is *not* session-gated
+and always asks for a physical confirmation. The adapter never uses it:
+authentication goes through `depinSignAuth`, where the device receives the
+structured fields, rebuilds `DEPIN-REQ|…` / `DEPIN-GET|…` / `DEPIN-CLEAR|…`
+plus the signed-message envelope itself, and validates them against the session
+before signing. `depinSignDigest` stays for what it was meant for, such as the
+pubkey-reveal transaction.
+
+Every signature the device returns is verified on the host before it is used,
+so a device that signs the wrong digest or with another key fails locally
+instead of at the node. Errors are `DepinDeviceIdentityError` with stable
+`code`s (`SESSION_PERMISSION_INSUFFICIENT`, `SESSION_TIME_BUDGET_INSUFFICIENT`,
+`INVALID_DEVICE_SIGNATURE`, `PAYLOAD_TOO_LARGE`…) so a UI can map them to
+concrete actions.
+
+**Sizing the session.** `identity.maxDecryptBytes` reports what the device can
+decrypt in one go; pick `limit` so a page fits, because a reply the device
+cannot open costs the whole challenge (`next_challenge` travels *inside* it).
+A round costs roughly 4 device operations for an initial read, 2 for a chained
+one, 2 to publish and 4 to purge — size `ratePerMin` accordingly. Before a
+sequence that spans several calls, reserve time explicitly:
+
+```javascript
+await identity.session.ensure({ minRemainingSeconds: 60 });
+```
+
+> **Firmware requirement.** The adapter needs firmware advertising protocol 2
+> with `depin_identity`, `depin_message`, `depin_auth_sign`,
+> `depin_session_key` and `depin_session_permissions`; it refuses to downgrade.
+> `depin_sign_auth` and session permissions are **not implemented in current
+> firmware yet** — the contract they must satisfy is specified, and exercised
+> by a cryptographically faithful device mock, in this package's tests.
+> Until `@neuraiproject/neurai-depin-msg@3.1.0` is published, this repository
+> uses the sibling checkout for integration tests. The package has no runtime
+> dependency on `neurai-depin-msg`; the package gate validates the adapter from
+> a clean `neurai-sign-esp32` tarball.
 
 ### Provision an unconfigured device (`setup_seed`)
 
@@ -629,7 +717,8 @@ Main class for device interaction.
 | `depinSign(params)` | Sign a DePIN message on-device (DER over the canonical CDepinMessage); session-gated, rate-limited |
 | `depinDecrypt(depinMessageHex)` | Decrypt a CDepinMessage addressed to this identity → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ |
 | `depinDecryptPayload(encryptedPayloadHex)` | Decrypt a bare ECIES `encrypted_payload_hex` (decomposed server item) → `plaintext_b64`; session-gated. Uses Base64 automatically on firmware 0.5.11+ and rejects data above its announced limit |
-| `depinSignDigest(digestHex)` | Sign a tx sighash with the DePIN key (account 100') → `{ signature, pubkey }`; physical confirmation, for the pubkey-reveal burn |
+| `depinSignAuth(command)` | Sign a protocol-2 authentication preimage (`request`/`get`/`clear`) from STRUCTURED fields: the device rebuilds `DEPIN-REQ|…`/`DEPIN-GET|…`/`DEPIN-CLEAR|…` and validates it against the session. Session-gated, permission-checked |
+| `depinSignDigest(digestHex)` | Sign a tx sighash with the DePIN key (account 100') → `{ signature, pubkey }`; physical confirmation, **not** session-gated, for the pubkey-reveal burn. Never used by the DePIN messaging adapter |
 | `depinSessionStatus()` | Check whether the cached/`setDepinSessionKey` key still names a live session → `{ active, token?, expires_in_s? }` (proto v2) |
 | `getDepinSessionKey()` / `setDepinSessionKey(key)` | Read / restore the per-session capability key (persist it in the OS keystore across restarts) |
 | `depinSessionEnd()` | End the DePIN session (also revoked on lock / disconnect / timeout) |

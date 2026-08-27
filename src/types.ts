@@ -278,15 +278,76 @@ export interface IDepinSessionResponse {
   protocol_version: number;
 }
 
+/**
+ * Session permissions (proto v2). Independent capabilities, because a read
+ * session must not be able to publish in the owner's name or purge the pool:
+ * `receive` covers DEPIN-REQ(receive)/DEPIN-GET, `publish` covers
+ * `depin_sign`, and `admin` covers DEPIN-REQ(admin)/DEPIN-CLEAR. Decryption is
+ * inherent to any live session. An omitted list grants only `["receive"]`.
+ */
+export type DepinSessionPermission = "receive" | "publish" | "admin";
+
 /** Reply to `depin_session_status` (proto v2). */
-export interface IDepinSessionStatusResponse {
+export type IDepinSessionStatusResponse =
+  | {
+      status: string;
+      /** No live session exists, or the supplied capability key did not match. */
+      active: false;
+      token?: never;
+      expires_in_s?: never;
+      permissions?: never;
+    }
+  | {
+      status: string;
+      /** A live session exists and the supplied capability key matched. */
+      active: true;
+      token: string;
+      /** Seconds until expiry (minimum of idle and hard-cap deadlines). */
+      expires_in_s: number;
+      /** Canonical permissions granted to the live session. */
+      permissions: DepinSessionPermission[];
+    };
+
+/**
+ * Structured protocol-2 authentication request. The device is NEVER given a
+ * free hash: it receives these fields, rebuilds `DEPIN-REQ|…`, `DEPIN-GET|…`
+ * or `DEPIN-CLEAR|…` plus the Neurai signed-message envelope, validates them
+ * against the session (token/scope by exact equality, permissions, TTL, rate)
+ * and only then signs. See {@link NeuraiESP32.depinSignAuth}.
+ */
+export type DepinSignAuthCommand =
+  | {
+      operation: "request";
+      /** `receive` needs the `receive` permission; `admin` needs `admin`. */
+      type: "receive" | "admin";
+      token: string;
+      address: string;
+      /** Client clock in MILLISECONDS; the node accepts ±60 s. */
+      timestamp_ms: number;
+    }
+  | {
+      operation: "get";
+      token: string;
+      address: string;
+      /** 64 lowercase hex characters. */
+      challenge: string;
+    }
+  | {
+      operation: "clear";
+      /** RESOLVED scope: the pool root when the caller meant the whole pool. */
+      scope: string;
+      address: string;
+      challenge: string;
+    };
+
+export interface IDepinSignAuthResponse {
   status: string;
-  /** True only when a live session exists AND the supplied key matched. */
-  active: boolean;
-  /** Channel token, present when `active`. */
-  token?: string;
-  /** Seconds until expiry (min of idle and hard-cap deadlines), when `active`. */
-  expires_in_s?: number;
+  /** DER signature over the rebuilt signed-message digest, hex. */
+  signature: string;
+  /** Compressed secp256k1 DePIN public key (33 bytes), hex. */
+  pubkey: string;
+  /** Total sign+decrypt operations performed in this session. */
+  op_count: number;
 }
 
 export interface IDepinIdentityResponse {
@@ -413,11 +474,17 @@ export interface IByteChannel {
 
 // ─── Serial connection options ───────────────────────────────────────────────
 
+/** Portable subset of the Web Serial API filter used by this package. */
+export interface ISerialPortFilter {
+  usbVendorId?: number;
+  usbProductId?: number;
+}
+
 export interface ISerialOptions {
   /** Baud rate (default: 115200) */
   baudRate?: number;
   /** USB vendor/product filters for port selection */
-  filters?: SerialPortFilter[];
+  filters?: ISerialPortFilter[];
   /**
    * Pre-built transport to drive the device. When provided, it is used as-is
    * and `baudRate`/`filters` are ignored (those configure the default Web Serial

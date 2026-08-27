@@ -7,6 +7,20 @@
 
 // Main class
 export { NeuraiESP32 } from "./NeuraiESP32.js";
+export {
+  createDepinDeviceIdentity,
+  DepinDeviceIdentityError,
+  derSignatureToRecoverable,
+  neuraiSignedMessageDigest,
+} from "./depin-identity.js";
+export type {
+  DepinAdapterNetwork,
+  DepinAuthSigningContext,
+  DepinDeviceIdentityErrorCode,
+  DepinMessageSigningContext,
+  IDepinDeviceIdentity,
+  IDepinIdentityAdapterOptions,
+} from "./depin-identity.js";
 
 // PSBT utilities
 export {
@@ -94,8 +108,18 @@ export type {
   ISignPsbtResponse,
   ISignTxResponse,
   ISignMessageResponse,
+  DepinSessionPermission,
+  DepinSignAuthCommand,
+  IDepinSessionResponse,
+  IDepinSessionStatusResponse,
+  IDepinIdentityResponse,
+  IDepinSignAuthResponse,
+  IDepinSignResponse,
+  IDepinDecryptResponse,
+  IDepinSignDigestResponse,
   IErrorResponse,
   ISerialOptions,
+  ISerialPortFilter,
   ISignResult,
   Network,
   KeyType,
