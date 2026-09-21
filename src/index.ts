@@ -125,3 +125,6 @@ export type {
   KeyType,
   NetworkType,
 } from "./types.js";
+
+// Monetary input types: raw protocol integers versus display units.
+export type { RawAmount, DecimalAmount } from "./amounts.js";

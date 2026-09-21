@@ -48,7 +48,7 @@ describe("buildUnsignedPQTransaction", () => {
 
   it("uses sighashAmount override (0 for asset inputs)", () => {
     const { inputs } = buildUnsignedPQTransaction({
-      utxos: [utxo({ sighashAmount: 0 })],
+      utxos: [utxo({ sighashAmount: 0 }), utxo({ txid: "b".repeat(64) })],
       outputs: [{ address: ORACLE_PQ_ADDRESS_TESTNET, value: 100_000 }],
       changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
       feeRate: 1,

@@ -18,6 +18,8 @@
  * ```
  */
 
+import { rawAmountForDevice, type RawAmount, type DecimalAmount } from "./amounts.js";
+import { normalizeSigningDisplay } from "./display.js";
 import { SerialConnection } from "./serial.js";
 import { Buffer } from "buffer";
 import { buildPSBT, finalizeSignedPSBT } from "./psbt.js";
@@ -609,7 +611,7 @@ export class NeuraiESP32 {
       {
         action: "sign_psbt",
         psbt: psbtBase64,
-        ...(display ? { display } : {}),
+        ...(display ? { display: normalizeSigningDisplay(display) } : {}),
       },
       120000
     );
@@ -633,7 +635,7 @@ export class NeuraiESP32 {
     pubkey?: string;
     masterFingerprint?: string;
     derivationPath?: string;
-    feeRate?: number;
+    feeRate?: DecimalAmount;
     display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
     const keyType = options.keyType ?? this.deviceInfo?.key_type ?? "legacy";
@@ -721,7 +723,7 @@ export class NeuraiESP32 {
     utxos: IPQUTXO[];
     outputs: ITxOutput[];
     changeAddress?: string;
-    feeRate?: number;
+    feeRate?: DecimalAmount;
     display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
     const changeAddress = options.changeAddress ?? this.deviceInfo?.address;
@@ -755,15 +757,15 @@ export class NeuraiESP32 {
    */
   async signPqRawTransaction(options: {
     txHex: string;
-    inputs: { index: number; amount: number; script_pub_key?: string }[];
+    inputs: { index: number; amount: RawAmount; script_pub_key?: string }[];
     display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
     const response = await this.serial.sendCommandHeartbeat(
       {
         action: "sign_tx",
         tx: options.txHex,
-        inputs: options.inputs,
-        ...(options.display ? { display: options.display } : {}),
+        inputs: options.inputs.map(input => ({ ...input, amount: rawAmountForDevice(input.amount) })),
+        ...(options.display ? { display: normalizeSigningDisplay(options.display) } : {}),
       },
       30000,
       600000

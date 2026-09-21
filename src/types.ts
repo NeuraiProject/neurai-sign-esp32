@@ -1,3 +1,5 @@
+import type { RawAmount, DecimalAmount } from "./amounts.js";
+
 /**
  * Types for neurai-sign-esp32
  */
@@ -12,7 +14,7 @@ export interface IUTXO {
   /** ScriptPubKey hex */
   scriptPubKey: string;
   /** Value in satoshis */
-  satoshis: number;
+  satoshis: RawAmount;
   /** Full raw transaction hex (required for P2PKH nonWitnessUtxo) */
   rawTxHex: string;
 }
@@ -23,7 +25,7 @@ export interface ITxOutput {
   /** Destination address */
   address: string;
   /** Value in satoshis */
-  value: number;
+  value: RawAmount;
 }
 
 // ─── PSBT build options ──────────────────────────────────────────────────────
@@ -44,7 +46,7 @@ export interface IBuildPSBTOptions {
   /** BIP44 derivation path, e.g. "m/44'/1900'/0'/0/0" */
   derivationPath: string;
   /** Fee rate in satoshis per byte (default: 1024) */
-  feeRate?: number;
+  feeRate?: DecimalAmount;
 }
 
 export interface IPSBTInputMetadata {
@@ -179,12 +181,12 @@ export interface IPQUTXO {
   txid: string;
   vout: number;
   /** Prevout value in satoshis. */
-  satoshis: number;
+  satoshis: RawAmount;
   /** Prevout scriptPubKey hex ("5120<commitment>"). */
   scriptPubKey: string;
   type: "pq";
-  /** Override for the sighash amount (use 0 for asset-wrapped outputs). */
-  sighashAmount?: number;
+  /** Actual XNA prevout value used for funding and sighash (use 0 for asset-wrapped outputs). */
+  sighashAmount?: RawAmount;
 }
 
 export interface IBip32PubkeyResponse {

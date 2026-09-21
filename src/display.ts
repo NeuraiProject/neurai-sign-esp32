@@ -1,14 +1,8 @@
+import { formatDisplayAmount } from "./amounts.js";
 import type {
   IAssetTransferDisplayMetadata,
   IBuildAssetTransferDisplayMetadataOptions,
 } from "./types.js";
-
-function formatAmount(value: number | string): string {
-  if (typeof value === "string") {
-    return value;
-  }
-  return value.toFixed(8);
-}
 
 export function buildAssetTransferDisplayMetadata(
   options: IBuildAssetTransferDisplayMetadataOptions
@@ -16,14 +10,23 @@ export function buildAssetTransferDisplayMetadata(
   return {
     kind: "asset_transfer",
     assetName: options.assetName,
-    assetAmount: formatAmount(options.assetAmount),
+    assetAmount: formatDisplayAmount(options.assetAmount),
     destinationAddress: options.destinationAddress,
     destinationCount: options.destinationCount ?? 1,
     changeAddress: options.changeAddress,
     changeCount: options.changeCount ?? 0,
     inputAddresses: options.inputAddresses ?? [],
     feeAmount:
-      options.feeAmount === undefined ? undefined : formatAmount(options.feeAmount),
+      options.feeAmount === undefined ? undefined : formatDisplayAmount(options.feeAmount),
     baseCurrency: options.baseCurrency ?? "XNA",
+  };
+}
+
+/** Validate display data even when callers bypass the convenience builder. */
+export function normalizeSigningDisplay(display: IAssetTransferDisplayMetadata): IAssetTransferDisplayMetadata {
+  return {
+    ...display,
+    assetAmount: formatDisplayAmount(display.assetAmount),
+    ...(display.feeAmount === undefined ? {} : { feeAmount: formatDisplayAmount(display.feeAmount) }),
   };
 }

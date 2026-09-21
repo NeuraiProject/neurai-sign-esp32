@@ -773,3 +773,54 @@ Opera 75+. Firefox and Safari are not supported.
 For non-browser platforms (React Native / Android USB, Node test doubles, …)
 inject a custom transport instead — see
 [React Native / Android USB](#react-native--android-usb).
+
+
+## Exact amounts (0.6.1)
+
+`IUTXO.satoshis`, `IPQUTXO.satoshis`, output `value`, PQ `amount` and
+`sighashAmount` accept `bigint`, integer strings, or safe integer numbers. These
+are **raw protocol units**, not decimal XNA or asset units. Values must be
+non-negative and no greater than `2100000000000000000n`. Already unsafe numbers
+are rejected; converting a rounded number to bigint cannot restore its digits.
+
+```ts
+const output = { address: destination, value: 10000000000000001n };
+// The same exact amount can be passed as value: '10000000000000001'.
+```
+
+Both high-level builders sum funds, calculate change and subtract fees in bigint.
+`feeRate` accepts a number or decimal string in satoshis per byte. Fractional
+rates are multiplied exactly and rounded upward to a whole satoshi once.
+
+Asset transactions prepared externally should use `buildPSBTFromRawTransaction`
+(legacy) or `signPqRawTransaction` (PQ). Their asset payload quantities remain
+encoded in the transaction bytes at scale 10^8, independent of asset divisibility.
+The high-level address/value output builders construct XNA payment outputs;
+they do not create asset transfer payloads. For asset-wrapped PQ inputs, pass
+`amount: 0` to the raw signing API, or `sighashAmount: 0` when using the builder.
+An asset quantity must never count toward XNA funding: an explicit zero prevout
+value contributes zero to fees and payment funding, so separate XNA inputs are
+required.
+
+Display metadata uses decimal **strings** for large asset quantities and fees:
+
+```ts
+const display = buildAssetTransferDisplayMetadata({
+  assetName: 'LARGE',
+  assetAmount: '100000000.00000001',
+  destinationAddress: destination,
+  feeAmount: '0.00000249',
+});
+```
+
+Plain strings retain their formatting. Invalid amounts, excess decimals and
+unsafe large fractional numbers are rejected instead of silently rounded.
+Direct signing calls validate display amounts too.
+
+Before handing `sign_tx` to a transport, the library encodes safe raw amounts as
+JSON numbers and larger ones as integer strings. Custom transports must preserve
+those strings. The reviewed firmware reads `amount` using ArduinoJson
+`as<unsigned long long>()`, which supports exact integer strings. Its local
+ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
+an on-device signing and display check of the firmware installed on your ESP32.
+No global bigint JSON serializer is required.

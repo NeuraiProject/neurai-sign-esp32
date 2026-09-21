@@ -9,11 +9,12 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "neurai-sign-esp32-package-"));
 
 try {
-  const packResult = JSON.parse(execFileSync(
+  const packResults = JSON.parse(execFileSync(
     "npm",
     ["pack", "--json", "--pack-destination", temporaryRoot],
     { cwd: packageRoot, encoding: "utf8" }
-  ))[0];
+  ));
+  const packResult = Array.isArray(packResults) ? packResults[0] : Object.values(packResults)[0];
   const forbidden = packResult.files
     .map((entry) => entry.path)
     .filter((path) => /^(?:tmp|src|test|scripts)\//.test(path));
@@ -67,10 +68,17 @@ try {
   writeFileSync(join(temporaryRoot, "consumer.ts"), `
     import {
       createDepinDeviceIdentity,
+      type RawAmount,
+      type ITxOutput,
+      type IPQSighashOptions,
       type DepinSessionPermission,
       type IDepinSignAuthResponse,
       type IDepinSessionStatusResponse,
     } from "@neuraiproject/neurai-sign-esp32";
+    const raw: RawAmount = 10000000000000001n;
+    const output: ITxOutput = { address: 'fixture', value: raw };
+    const sighash: IPQSighashOptions = { tx: '', inputIndex: 0, amount: '10000000000000001' };
+    void output; void sighash;
     const permission: DepinSessionPermission = "receive";
     const response = null as unknown as IDepinSignAuthResponse;
     const status = null as unknown as IDepinSessionStatusResponse;

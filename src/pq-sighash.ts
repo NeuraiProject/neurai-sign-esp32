@@ -8,6 +8,7 @@
  * See docs/pq-protocol-design.md §1 and uNeurai Transaction.cpp:757.
  */
 
+import { toRawAmount, type RawAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 
@@ -55,7 +56,7 @@ export interface IPQSighashOptions {
   /** Index of the input being signed. */
   inputIndex: number;
   /** Prevout amount in satoshis (use 0 for asset-wrapped outputs). */
-  amount: number | bigint;
+  amount: RawAmount;
   /** witnessScript hex (phase 1: "51" = OP_TRUE). */
   witnessScript?: string;
   /** AuthScript auth type (default 0x01 = PQ). */
@@ -77,7 +78,7 @@ export function pqAuthScriptSighash(options: IPQSighashOptions): Buffer {
   const witnessScript = Buffer.from(options.witnessScript ?? "51", "hex");
   const authType = options.authType ?? PQ_AUTH_TYPE;
   const sighashType = options.sighashType ?? SIGHASH_ALL;
-  const amount = BigInt(options.amount);
+  const amount = toRawAmount(options.amount, "prevout amount");
 
   const outpointOf = (i: { hash: Uint8Array; index: number }): Buffer => {
     const b = Buffer.alloc(36);

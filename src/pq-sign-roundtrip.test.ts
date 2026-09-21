@@ -11,14 +11,13 @@ import { encodeDestinationScript, publicKeyToAddress } from "./pq-address.js";
 // extraction → re-derived sighash → signature verification all agree. If the
 // real device signs over the same sighash, its signature verifies identically.
 describe("PQ signing round-trip (noble emulates the device)", () => {
-  it("produces a verifiable ML-DSA-44 signature over the AuthScript sighash", () => {
+  it.each([100_000_000, 10000000000000001n, "10000000000000001"])("produces a verifiable ML-DSA-44 signature for %s raw units", (amount) => {
     const seed = new Uint8Array(32).fill(3);
     const { publicKey, secretKey } = ml_dsa44.keygen(seed);
     const pubHex = Buffer.from(publicKey).toString("hex");
 
     const address = publicKeyToAddress(pubHex, { network: "testnet", keyType: "pq" });
     const scriptPubKey = encodeDestinationScript(address).toString("hex");
-    const amount = 100_000_000;
 
     const { rawTxHex, inputs } = buildUnsignedPQTransaction({
       utxos: [{ txid: "11".repeat(32), vout: 0, satoshis: amount, scriptPubKey, type: "pq" }],

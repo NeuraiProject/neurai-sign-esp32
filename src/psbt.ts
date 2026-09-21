@@ -9,6 +9,7 @@
  * and fee calculation already happen elsewhere.
  */
 
+import { estimateFee, toRawAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 import { getNetwork } from "./networks.js";
@@ -117,13 +118,15 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
     throw new Error("No outputs provided");
   }
 
-  const totalOutputValue = outputs.reduce((sum, output) => sum + output.value, 0);
-  const totalInputValue = utxos.reduce((sum, utxo) => sum + utxo.satoshis, 0);
+  const outputValues = outputs.map(output => toRawAmount(output.value, "output.value"));
+  const totalOutputValue = toRawAmount(outputValues.reduce((sum, value) => sum + value, 0n), "total outputs");
+  const inputValues = utxos.map(utxo => toRawAmount(utxo.satoshis, "utxo.satoshis"));
+  const totalInputValue = toRawAmount(inputValues.reduce((sum, value) => sum + value, 0n), "total inputs");
   const estimatedSize = estimateTxSize(utxos.length, outputs.length + 1);
-  const fee = estimatedSize * feeRate;
+  const fee = estimateFee(estimatedSize, feeRate);
   const change = totalInputValue - totalOutputValue - fee;
 
-  if (change < 0) {
+  if (change < 0n) {
     throw new Error(
       `Insufficient funds: inputs=${totalInputValue}, outputs=${totalOutputValue}, fee=${fee}`
     );
@@ -148,13 +151,13 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
   }
 
   for (const output of outputs) {
-    psbt.addOutput(addressOutput(output.address, BigInt(output.value)));
+    psbt.addOutput(addressOutput(output.address, toRawAmount(output.value, "output.value")));
   }
 
-  const DUST_THRESHOLD = 546;
+  const DUST_THRESHOLD = 546n;
   if (change >= DUST_THRESHOLD) {
     psbt.addOutput({
-      ...addressOutput(changeAddress, BigInt(change)),
+      ...addressOutput(changeAddress, change),
       bip32Derivation,
     });
   }
@@ -475,7 +478,9 @@ function inputFinalizeGetAmtsPartial(
   const fee = inputAmount - outputAmount;
   cache.__FEE = fee >= 0n ? fee : 0n;
   cache.__EXTRACTED_TX = tx;
-  cache.__FEE_RATE = fee > 0n ? Math.floor(Number(fee / BigInt(tx.virtualSize()))) : 0;
+  const feeRate = fee > 0n ? fee / BigInt(tx.virtualSize()) : 0n;
+  if (feeRate > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error("Fee rate exceeds the safe numeric range");
+  cache.__FEE_RATE = Number(feeRate);
 }
 
 function scriptWitnessToWitnessStack(finalScriptWitness: Uint8Array): Uint8Array[] {

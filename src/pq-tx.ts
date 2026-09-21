@@ -5,6 +5,7 @@
  * device via the `sign_tx` action. See docs/pq-protocol-design.md §4.
  */
 
+import { estimateFee, rawAmountForDevice, toRawAmount, type DecimalAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 import { encodeDestinationScript } from "./pq-address.js";
@@ -18,12 +19,13 @@ const DEFAULT_FEE_RATE = 1024;
 const TX_OVERHEAD = 10;
 /** Worst-case vbytes for a PQ AuthScript input (auth type + ~2421B sig + ~1313B pubkey). */
 const PQ_INPUT_VBYTES = 977;
-const DUST_THRESHOLD = 546;
+const DUST_THRESHOLD = 546n;
 
 /** One entry of the `sign_tx` request `inputs[]` array. */
 export interface IPQSignInput {
   index: number;
-  amount: number;
+  /** Exact JSON integer: safe number or integer text. */
+  amount: number | string;
   script_pub_key: string;
 }
 
@@ -33,7 +35,7 @@ export interface IBuildUnsignedPQTxOptions {
   /** Change address (defaults to the device's own PQ address). */
   changeAddress: string;
   /** Fee rate in satoshis per byte (default: 1024). */
-  feeRate?: number;
+  feeRate?: DecimalAmount;
   /** Transaction version (default: 2). */
   version?: number;
 }
@@ -80,12 +82,17 @@ export function buildUnsignedPQTransaction(
   const outputScripts = outputs.map((o) => encodeDestinationScript(o.address));
   let outputsVbytes = 0;
   for (let i = 0; i < outputs.length; i += 1) {
-    tx.addOutput(outputScripts[i], BigInt(outputs[i].value));
+    tx.addOutput(outputScripts[i], toRawAmount(outputs[i].value, "output.value"));
     outputsVbytes += outputVbytes(outputScripts[i]);
   }
 
-  const totalInputValue = utxos.reduce((sum, u) => sum + u.satoshis, 0);
-  const totalOutputValue = outputs.reduce((sum, o) => sum + o.value, 0);
+  const inputAmounts = utxos.map(u => {
+    toRawAmount(u.satoshis, "utxo.satoshis");
+    // Asset quantities must never fund XNA outputs or fees. Their prevout value is zero.
+    return toRawAmount(u.sighashAmount ?? u.satoshis, "prevout amount");
+  });
+  const totalInputValue = toRawAmount(inputAmounts.reduce((sum, value) => sum + value, 0n), "total inputs");
+  const totalOutputValue = toRawAmount(outputs.reduce((sum, o) => sum + toRawAmount(o.value, "output.value"), 0n), "total outputs");
 
   const changeScript = encodeDestinationScript(changeAddress);
   const estimatedSize =
@@ -93,22 +100,22 @@ export function buildUnsignedPQTransaction(
     utxos.length * PQ_INPUT_VBYTES +
     outputsVbytes +
     outputVbytes(changeScript);
-  const fee = estimatedSize * feeRate;
+  const fee = estimateFee(estimatedSize, feeRate);
   const change = totalInputValue - totalOutputValue - fee;
 
-  if (change < 0) {
+  if (change < 0n) {
     throw new Error(
       `Insufficient funds: inputs=${totalInputValue}, outputs=${totalOutputValue}, fee=${fee}`
     );
   }
 
   if (change >= DUST_THRESHOLD) {
-    tx.addOutput(changeScript, BigInt(change));
+    tx.addOutput(changeScript, change);
   }
 
   const inputs: IPQSignInput[] = utxos.map((utxo, index) => ({
     index,
-    amount: utxo.sighashAmount ?? utxo.satoshis,
+    amount: rawAmountForDevice(inputAmounts[index]),
     script_pub_key: utxo.scriptPubKey,
   }));
 
