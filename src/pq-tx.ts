@@ -3,12 +3,18 @@
  * path. PSBT cannot represent AuthScript witness v1 inputs, so spending from PQ
  * addresses uses an unsigned raw transaction + per-input metadata sent to the
  * device via the `sign_tx` action. See docs/pq-protocol-design.md §4.
+ *
+ * The firmware signs these inputs as generic AuthScript witness v1 (`nc1p…` /
+ * `tnc1p…`, scriptPubKey `5120<C>`). Strict PQ v2 (`pq1z…`) and strict ECDSA v3
+ * (`nq1r…`) prevouts need a different sighash, so they are rejected here
+ * instead of producing a signature the node refuses. Outputs may pay to any
+ * address type.
  */
 
 import { estimateFee, rawAmountForDevice, toRawAmount, type DecimalAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
-import { encodeDestinationScript } from "./pq-address.js";
+import { authScriptWitnessVersionOfScript, encodeDestinationScript } from "./pq-address.js";
 import type { IPQUTXO, ITxOutput } from "./types.js";
 
 /** Phase-1 payload limits (docs §4). */
@@ -47,6 +53,22 @@ export interface IUnsignedPQTx {
   inputs: IPQSignInput[];
 }
 
+/**
+ * Throw if a prevout scriptPubKey is a strict AuthScript program (OP_2 / OP_3):
+ * `sign_tx` signs witness v1 only. Unknown or empty scripts pass (the device
+ * checks what it can); the old check-free behaviour is kept for them.
+ */
+export function assertSignTxPrevoutScript(scriptPubKey: string | undefined, index: number): void {
+  if (!scriptPubKey) return;
+  const version = authScriptWitnessVersionOfScript(scriptPubKey);
+  if (version === 2 || version === 3) {
+    throw new Error(
+      `Input #${index} spends a strict AuthScript witness v${version} output ` +
+        `(${version === 2 ? "pq1z…" : "nq1r…"}); the NeuraiHW sign_tx flow signs witness v1 (nc1p…) inputs only`
+    );
+  }
+}
+
 function outputVbytes(script: Buffer): number {
   // value(8) + scriptLen varint(1 for <253) + script
   return 8 + 1 + script.length;
@@ -72,8 +94,13 @@ export function buildUnsignedPQTransaction(
     throw new Error(`Too many outputs (${outputs.length}); max ${MAX_OUTPUTS - 1} plus change in phase 1.`);
   }
 
+  utxos.forEach((utxo, index) => assertSignTxPrevoutScript(utxo.scriptPubKey, index));
+
   const tx = new bitcoin.Transaction();
   tx.version = options.version ?? 2;
+  if (tx.version === 3) {
+    throw new Error("Transaction version 3 (NIP-014 reference inputs) is not supported");
+  }
 
   for (const utxo of utxos) {
     tx.addInput(Buffer.from(utxo.txid, "hex").reverse(), utxo.vout, 0xffffffff);
@@ -122,7 +149,7 @@ export function buildUnsignedPQTransaction(
   return { rawTxHex: tx.toHex(), inputs };
 }
 
-/** The decoded AuthScript witness stack of a signed PQ input. */
+/** The decoded AuthScript witness stack of a signed PQ input (v1 or strict v2). */
 export interface IPQWitness {
   authType: number;
   /** ML-DSA-44 signature (hashType byte stripped). */
@@ -138,6 +165,7 @@ export interface IPQWitness {
 /**
  * Extract and decode the AuthScript witness stack of a signed PQ input:
  *   [authType] [sig||hashType] [0x05||pubkey] [witnessScript]
+ * (the same layout for generic v1 and strict PQ v2 inputs).
  */
 export function extractPQWitness(
   signedTxHex: string,

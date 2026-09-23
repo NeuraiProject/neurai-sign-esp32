@@ -43,34 +43,61 @@ export { WebSerialByteChannel } from "./channels/web-serial.js";
 export {
   getNetwork,
   resolveNetwork,
+  fromNeuraiKeyNetwork,
   getPQNetworkParams,
+  authScriptFamilyByHrp,
+  authScriptFamilyByVersion,
+  AUTHSCRIPT_FAMILIES,
   neuraiMainnet,
   neuraiTestnet,
   neuraiLegacyMainnet,
   neuraiLegacyTestnet,
   neuraiPQMainnet,
   neuraiPQTestnet,
+  neuraiPQStrictMainnet,
+  neuraiPQStrictTestnet,
 } from "./networks.js";
-export type { PQNetworkParams } from "./networks.js";
+export type {
+  AuthScriptFamily,
+  AuthScriptFamilyParams,
+  NeuraiKeyNetworkAlias,
+  PQNetworkParams,
+} from "./networks.js";
 
-// PQ address / AuthScript helpers
+// Address / AuthScript helpers (every Neurai address type)
 export {
   isPQAddress,
+  isWitnessAddress,
+  getAddressFamily,
   decodeAddress,
   encodeDestinationScript,
+  encodeAuthScriptDestination,
+  encodeP2PKHDestination,
+  authScriptWitnessVersionOfScript,
+  normalizeDeviceAuthScriptAddress,
   publicKeyToAddress,
   pqAddressFromPublicKey,
+  ecdsaAddressFromPublicKey,
+  authScriptAddressFromProgram,
+  authScriptCommitment,
   pqCommitment,
+  ecdsaCommitment,
   pqAuthDescriptor,
+  ecdsaAuthDescriptor,
   DEFAULT_WITNESS_SCRIPT_HEX,
 } from "./pq-address.js";
-export type { DecodedAddress } from "./pq-address.js";
+export type {
+  AddressFamily,
+  DecodedAddress,
+  IAuthScriptCommitmentOptions,
+} from "./pq-address.js";
 
 // PQ raw-transaction builder (spend from PQ)
 export {
   buildUnsignedPQTransaction,
   parseSignedPQTransaction,
   extractPQWitness,
+  assertSignTxPrevoutScript,
   MAX_PQ_INPUTS,
   MAX_OUTPUTS,
 } from "./pq-tx.js";
@@ -81,9 +108,15 @@ export type {
   IPQWitness,
 } from "./pq-tx.js";
 
-// PQ AuthScript sighash (for verifying device signatures)
-export { pqAuthScriptSighash, SIGHASH_ALL, PQ_AUTH_TYPE } from "./pq-sighash.js";
-export type { IPQSighashOptions } from "./pq-sighash.js";
+// AuthScript sighash (for verifying device signatures): generic v1 and strict v2/v3
+export {
+  pqAuthScriptSighash,
+  strictAuthScriptSighash,
+  SIGHASH_ALL,
+  PQ_AUTH_TYPE,
+  ECDSA_AUTH_TYPE,
+} from "./pq-sighash.js";
+export type { IPQSighashOptions, IStrictSighashOptions } from "./pq-sighash.js";
 
 // Types
 export type {

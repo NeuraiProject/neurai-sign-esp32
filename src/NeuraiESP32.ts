@@ -25,11 +25,16 @@ import { Buffer } from "buffer";
 import { buildPSBT, finalizeSignedPSBT } from "./psbt.js";
 import {
   DEFAULT_WITNESS_SCRIPT_HEX,
+  normalizeDeviceAuthScriptAddress,
   pqAuthDescriptor,
   pqCommitment,
   publicKeyToAddress,
 } from "./pq-address.js";
-import { buildUnsignedPQTransaction, parseSignedPQTransaction } from "./pq-tx.js";
+import {
+  assertSignTxPrevoutScript,
+  buildUnsignedPQTransaction,
+  parseSignedPQTransaction,
+} from "./pq-tx.js";
 import type {
   DeviceResponse,
   DeviceState,
@@ -228,7 +233,14 @@ export class NeuraiESP32 {
     );
 
     this.assertSuccess(response);
-    this.deviceInfo = response as IDeviceInfo;
+    const info = response as IDeviceInfo;
+    // Firmware built against uNeurai < 0.2.0 reports its AuthScript v1 address
+    // as nq1p… / tnq1p…, which the node rejects; re-encode it as nc1p… /
+    // tnc1p… (same scriptPubKey) so it can be used as a change address.
+    if (typeof info.address === "string") {
+      info.address = normalizeDeviceAuthScriptAddress(info.address);
+    }
+    this.deviceInfo = info;
     return this.deviceInfo;
   }
 
@@ -239,6 +251,12 @@ export class NeuraiESP32 {
    * derives the corresponding Neurai address from that pubkey + the device mode
    * (legacy P2PKH or PQ AuthScript) and fills it in, so consumers always get a
    * ready-to-use `address`. See docs/pq-protocol-design.md §3.
+   *
+   * PQ mode: the firmware sends `auth_type` / `witness_script` (snake_case);
+   * they are read into `authType` / `witnessScript` (camelCase is accepted
+   * too). The address is the generic AuthScript v1 form (`nc1p…` /
+   * `tnc1p…`), or strict PQ v2 (`pq1z…`) if the device reports
+   * `witness_version: 2`.
    */
   async getAddress(): Promise<IAddressResponse> {
     const response = await this.serial.sendCommand(
@@ -258,14 +276,25 @@ export class NeuraiESP32 {
     res.type = keyType;
 
     if (keyType === "pq") {
-      const witnessScript = res.witnessScript ?? DEFAULT_WITNESS_SCRIPT_HEX;
+      const witnessScript =
+        res.witnessScript ?? res.witness_script ?? DEFAULT_WITNESS_SCRIPT_HEX;
+      const authType = res.authType ?? res.auth_type ?? 1;
+      const reportedVersion = res.witnessVersion ?? res.witness_version ?? 1;
+      if (authType !== 1) {
+        throw new Error(`Unsupported PQ auth type ${authType} reported by the device`);
+      }
+      if (reportedVersion !== 1 && reportedVersion !== 2) {
+        throw new Error(`Unsupported PQ witness version ${reportedVersion} reported by the device`);
+      }
+      const witnessVersion: 1 | 2 = reportedVersion;
       res.witnessScript = witnessScript;
-      res.authType = res.authType ?? 1;
-      res.commitment = pqCommitment(res.pubkey, witnessScript).toString("hex");
+      res.authType = authType;
+      res.witnessVersion = witnessVersion;
+      res.commitment = pqCommitment(res.pubkey, witnessScript, witnessVersion).toString("hex");
       res.authDescriptor = pqAuthDescriptor(res.pubkey).toString("hex");
-      res.address =
-        res.address ||
-        publicKeyToAddress(res.pubkey, { network, keyType, witnessScript });
+      res.address = res.address
+        ? normalizeDeviceAuthScriptAddress(res.address)
+        : publicKeyToAddress(res.pubkey, { network, keyType, witnessScript, witnessVersion });
     } else {
       res.address =
         res.address || publicKeyToAddress(res.pubkey, { network, keyType });
@@ -754,12 +783,21 @@ export class NeuraiESP32 {
    * PQ signatures. `inputs` carries per-input metadata: the input index, the
    * prevout `amount` (0 for asset-wrapped inputs) and optionally the prevout
    * `script_pub_key` for verification.
+   *
+   * The firmware signs generic AuthScript v1 inputs (`nc1p…`); inputs whose
+   * `script_pub_key` is a strict v2 / v3 program are rejected before anything
+   * is sent, as are version-3 transactions.
    */
   async signPqRawTransaction(options: {
     txHex: string;
     inputs: { index: number; amount: RawAmount; script_pub_key?: string }[];
     display?: ISigningDisplayMetadata;
   }): Promise<ISignResult> {
+    options.inputs.forEach((input) => assertSignTxPrevoutScript(input.script_pub_key, input.index));
+    const txVersion = Buffer.from(options.txHex.slice(0, 8), "hex");
+    if (txVersion.length === 4 && txVersion.readInt32LE(0) === 3) {
+      throw new Error("Transaction version 3 (NIP-014 reference inputs) is not supported");
+    }
     const response = await this.serial.sendCommandHeartbeat(
       {
         action: "sign_tx",
@@ -795,6 +833,12 @@ export class NeuraiESP32 {
     }
   }
 
+  /**
+   * NetworkType for the PSBT flow from the device info: "Neurai" → `xna`,
+   * "NeuraiTest" → `xna-test` (Legacy P2PKH; neurai-key 5 calls them
+   * `xna-legacy` / `xna-legacy-test`). A network name containing "legacy"
+   * selects the coin-type-0 networks (`xna-legacy`, key-5 `xna-old-legacy`).
+   */
   private inferNetworkType(info: IDeviceInfo | null): NetworkType {
     if (!info) {
       return "xna";

@@ -1,5 +1,6 @@
 /**
- * PSBT helpers for Neurai P2PKH transactions.
+ * PSBT helpers for Neurai P2PKH transactions (and strict ECDSA witness v3
+ * inputs, see below).
  *
  * This package supports two build paths:
  * - high-level build from UTXOs + outputs + fee estimation
@@ -7,13 +8,25 @@
  *
  * The second path matches the webwallet integration, where coin selection
  * and fee calculation already happen elsewhere.
+ *
+ * Outputs may pay to any Neurai address type (P2PKH, `nc1p…`, `pq1z…`,
+ * `nq1r…`). Inputs are P2PKH, or strict ECDSA witness v3 (`nq1r…`) prevouts
+ * signed by firmware built with uNeurai >= 0.2.0, whose `PSBT::sign` uses the
+ * strict sighash for them; the finalizer then builds the witness
+ * `[0x02, sig, pubkey, 0x51]`. Generic AuthScript v1 and strict PQ v2 inputs
+ * cannot be signed through a PSBT (see `buildUnsignedPQTransaction` /
+ * `sign_tx` for v1).
  */
 
 import { estimateFee, toRawAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 import { getNetwork } from "./networks.js";
-import { encodeDestinationScript, isPQAddress } from "./pq-address.js";
+import {
+  authScriptWitnessVersionOfScript,
+  decodeAddress,
+  encodeDestinationScript,
+} from "./pq-address.js";
 import type {
   IBuildPSBTFromRawOptions,
   IBuildPSBTOptions,
@@ -23,7 +36,11 @@ import type {
 const DEFAULT_FEE_RATE = 1024;
 const TX_OVERHEAD = 10;
 const INPUT_SIZE = 148;
+/** Strict ECDSA v3 input: 41 B non-witness + ~112 WU witness (+ marker/flag). */
+const ECDSA_V3_INPUT_SIZE = 69;
 const OUTPUT_SIZE = 34;
+/** AuthScript output: value(8) + len(1) + OP_n 0x20 <32>. */
+const AUTHSCRIPT_OUTPUT_SIZE = 43;
 
 type PsbtInput = bitcoin.Psbt['data']['inputs'][number];
 type PsbtCache = {
@@ -34,8 +51,16 @@ type PsbtCache = {
   __NON_WITNESS_UTXO_TX_CACHE?: Record<number, bitcoin.Transaction>;
 };
 
-function estimateTxSize(inputCount: number, outputCount: number): number {
-  return TX_OVERHEAD + inputCount * INPUT_SIZE + outputCount * OUTPUT_SIZE;
+/** Estimated size of a P2PKH (148) or strict ECDSA v3 (69) input. */
+function inputSize(scriptPubKeyHex: string | undefined): number {
+  return scriptPubKeyHex && authScriptWitnessVersionOfScript(scriptPubKeyHex) === 3
+    ? ECDSA_V3_INPUT_SIZE
+    : INPUT_SIZE;
+}
+
+/** Estimated size of a P2PKH (34) or AuthScript (43) output. */
+function outputSize(address: string): number {
+  return decodeAddress(address).type === "pq" ? AUTHSCRIPT_OUTPUT_SIZE : OUTPUT_SIZE;
 }
 
 function parseMasterFingerprint(hex: string): Buffer {
@@ -48,15 +73,25 @@ function parseMasterFingerprint(hex: string): Buffer {
 }
 
 /**
- * Build a PSBT output descriptor for a destination address. PQ (AuthScript)
- * addresses are not understood by bitcoinjs-lib, so they are encoded to a raw
- * scriptPubKey here; legacy addresses are passed through by address.
+ * Build a PSBT output descriptor for a destination address. AuthScript
+ * (Bech32m: `nc1p…`, `pq1z…`, `nq1r…`) addresses are not understood by
+ * bitcoinjs-lib, so they are encoded to a raw scriptPubKey here (after checking
+ * that their chain matches `network`); legacy addresses are passed through by
+ * address so bitcoinjs-lib checks their version byte.
  */
 function addressOutput(
   address: string,
-  value: bigint
+  value: bigint,
+  network: NetworkType
 ): { address: string; value: bigint } | { script: Buffer; value: bigint } {
-  if (isPQAddress(address)) {
+  const decoded = decodeAddress(address);
+  if (decoded.type === "pq") {
+    const psbtIsTestnet = network.endsWith("-test");
+    if ((decoded.network === "testnet") !== psbtIsTestnet) {
+      throw new Error(
+        `Address ${address} is a ${decoded.network} address but the PSBT network is ${network}`
+      );
+    }
     return { script: encodeDestinationScript(address), value };
   }
   return { address, value };
@@ -122,7 +157,11 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
   const totalOutputValue = toRawAmount(outputValues.reduce((sum, value) => sum + value, 0n), "total outputs");
   const inputValues = utxos.map(utxo => toRawAmount(utxo.satoshis, "utxo.satoshis"));
   const totalInputValue = toRawAmount(inputValues.reduce((sum, value) => sum + value, 0n), "total inputs");
-  const estimatedSize = estimateTxSize(utxos.length, outputs.length + 1);
+  const estimatedSize =
+    TX_OVERHEAD +
+    utxos.reduce((sum, utxo) => sum + inputSize(utxo.scriptPubKey), 0) +
+    outputs.reduce((sum, output) => sum + outputSize(output.address), 0) +
+    outputSize(changeAddress);
   const fee = estimateFee(estimatedSize, feeRate);
   const change = totalInputValue - totalOutputValue - fee;
 
@@ -151,13 +190,13 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
   }
 
   for (const output of outputs) {
-    psbt.addOutput(addressOutput(output.address, toRawAmount(output.value, "output.value")));
+    psbt.addOutput(addressOutput(output.address, toRawAmount(output.value, "output.value"), network));
   }
 
   const DUST_THRESHOLD = 546n;
   if (change >= DUST_THRESHOLD) {
     psbt.addOutput({
-      ...addressOutput(changeAddress, change),
+      ...addressOutput(changeAddress, change, network),
       bip32Derivation,
     });
   }
@@ -374,6 +413,31 @@ function readPsbtVarInt(buffer: Buffer, offset: number) {
   throw new Error("PSBT values larger than 32 bits are not supported");
 }
 
+/** Serialize a witness stack the way PSBT_IN_FINAL_SCRIPTWITNESS stores it. */
+function witnessStackToScriptWitness(stack: Buffer[]): Buffer {
+  const varint = (n: number): Buffer => {
+    if (n < 0xfd) return Buffer.from([n]);
+    if (n <= 0xffff) {
+      const b = Buffer.alloc(3);
+      b[0] = 0xfd;
+      b.writeUInt16LE(n, 1);
+      return b;
+    }
+    const b = Buffer.alloc(5);
+    b[0] = 0xfe;
+    b.writeUInt32LE(n, 1);
+    return b;
+  };
+  return Buffer.concat([
+    varint(stack.length),
+    ...stack.flatMap((item) => [varint(item.length), item]),
+  ]);
+}
+
+/**
+ * Finalize the device-signed inputs: P2PKH (scriptSig `<sig> <pubkey>`) and
+ * strict ECDSA witness v3 (witness `[0x02, sig, pubkey, 0x51]`).
+ */
 function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean) {
   let finalizedCount = 0;
 
@@ -402,6 +466,33 @@ function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean
         throw new Error(`Missing prevout to finalize input #${index}`);
       }
       continue;
+    }
+
+    const witnessVersion = authScriptWitnessVersionOfScript(Buffer.from(prevOut.script));
+    if (witnessVersion === 3) {
+      // Strict ECDSA witness v3: the consensus template is exactly
+      // [authType 0x02, sig||hashType, compressed pubkey, witnessScript OP_TRUE].
+      const pubkey = Buffer.from(partialSig.pubkey);
+      if (pubkey.length !== 33) {
+        throw new Error(`Input #${index}: strict ECDSA inputs need a compressed public key`);
+      }
+      psbt.finalizeInput(index, () => ({
+        finalScriptSig: undefined,
+        finalScriptWitness: witnessStackToScriptWitness([
+          Buffer.from([0x02]),
+          Buffer.from(partialSig.signature),
+          pubkey,
+          Buffer.from([0x51]),
+        ]),
+      }));
+      finalizedCount += 1;
+      continue;
+    }
+    if (witnessVersion === 1 || witnessVersion === 2) {
+      throw new Error(
+        `Input #${index} spends an AuthScript witness v${witnessVersion} output, which cannot be ` +
+          "signed through a PSBT (use sign_tx for witness v1)"
+      );
     }
 
     psbt.finalizeInput(index, () => ({

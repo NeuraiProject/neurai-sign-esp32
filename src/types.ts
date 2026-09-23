@@ -11,7 +11,10 @@ export interface IUTXO {
   txid: string;
   /** Output index in the transaction */
   vout: number;
-  /** ScriptPubKey hex */
+  /**
+   * ScriptPubKey hex: P2PKH, or strict ECDSA witness v3 ("5320<commitment>",
+   * `nq1r…`) for firmware built with uNeurai >= 0.2.0.
+   */
   scriptPubKey: string;
   /** Value in satoshis */
   satoshis: RawAmount;
@@ -156,21 +159,41 @@ export interface IAddressResponse {
   type?: KeyType;
   /**
    * Neurai address. In PQ mode the device returns only `pubkey`; the library
-   * derives this address from the pubkey + mode and fills it in.
+   * derives this address from the pubkey + mode and fills it in (generic
+   * AuthScript v1 `nc1p…` / `tnc1p…`, or strict `pq1z…` / `tpq1z…` when the
+   * device reports witness version 2).
    */
   address: string;
   /** Compressed secp256k1 pubkey (33B, legacy) or raw ML-DSA-44 pubkey (1312B, PQ), hex. */
   pubkey: string;
   path: string;
   // ── PQ-only (present when type === "pq") ──
-  /** AuthScript auth type (1 = PQ). */
+  /**
+   * AuthScript auth type (1 = PQ). Normalized by the library from the
+   * firmware's snake_case `auth_type` (default 1).
+   */
   authType?: number;
-  /** witnessScript hex (phase 1: "51" = OP_TRUE). */
+  /**
+   * witnessScript hex (phase 1: "51" = OP_TRUE). Normalized by the library
+   * from the firmware's snake_case `witness_script` (default "51").
+   */
   witnessScript?: string;
+  /**
+   * Witness version of the PQ address: 1 (generic AuthScript, the only one
+   * current firmware uses) or 2 (strict PQ). Normalized from `witness_version`.
+   */
+  witnessVersion?: 1 | 2;
   /** 32-byte AuthScript commitment (hex), derived by the library. */
   commitment?: string;
   /** auth_descriptor (hex), derived by the library. */
   authDescriptor?: string;
+  // ── Raw firmware field names (the NeuraiHW JSON protocol uses snake_case) ──
+  /** As sent by the firmware; read into {@link authType}. */
+  auth_type?: number;
+  /** As sent by the firmware; read into {@link witnessScript}. */
+  witness_script?: string;
+  /** Optional (future firmware); read into {@link witnessVersion}. */
+  witness_version?: number;
 }
 
 /**
@@ -182,7 +205,11 @@ export interface IPQUTXO {
   vout: number;
   /** Prevout value in satoshis. */
   satoshis: RawAmount;
-  /** Prevout scriptPubKey hex ("5120<commitment>"). */
+  /**
+   * Prevout scriptPubKey hex: generic AuthScript v1 "5120<commitment>" (the
+   * device's `nc1p…` / `tnc1p…` address, optionally asset-wrapped). Strict
+   * v2 / v3 prevouts ("5220…" / "5320…") are rejected: `sign_tx` signs v1 only.
+   */
   scriptPubKey: string;
   type: "pq";
   /** Actual XNA prevout value used for funding and sighash (use 0 for asset-wrapped outputs). */
@@ -354,13 +381,21 @@ export interface IDepinSignAuthResponse {
 
 export interface IDepinIdentityResponse {
   status: string;
-  /** DePIN chat address (dedicated BIP44 account 100'). */
+  /**
+   * DePIN chat address (dedicated BIP44 account 100'). Always Legacy P2PKH:
+   * the node's DePIN messaging does not accept witness addresses (neurai-key 5
+   * network "xna-legacy" / "xna-legacy-test").
+   */
   address: string;
   /** Compressed secp256k1 public key (33 bytes), hex. */
   pubkey: string;
   /** BIP44 derivation path of the DePIN identity key. */
   path: string;
-  /** Network tag: `"xna"` (mainnet) or `"xna-test"` (testnet). */
+  /**
+   * Network tag: `"xna"` (mainnet) or `"xna-test"` (testnet), in this
+   * package's naming (Legacy P2PKH; neurai-key 5 `"xna-legacy"` /
+   * `"xna-legacy-test"`).
+   */
   network: string;
   protocol_version: number;
 }
@@ -516,6 +551,20 @@ export type KeyType = "legacy" | "pq";
  * type. Not part of the primary public surface — prefer (Network, KeyType).
  * `xna-legacy` / `xna-legacy-test` are the legacy coin-type-0 networks kept for
  * backward compatibility and are unrelated to `KeyType: "legacy"`.
+ *
+ * These names predate `@neuraiproject/neurai-key` 5 and keep their meaning;
+ * some collide with key-5 names that mean something else:
+ *
+ * | here              | meaning here                   | same thing in neurai-key 5 |
+ * |-------------------|--------------------------------|----------------------------|
+ * | `xna`             | Legacy P2PKH, m/44'/1900'      | `xna-legacy`               |
+ * | `xna-test`        | Legacy P2PKH, m/44'/1'         | `xna-legacy-test`          |
+ * | `xna-legacy`      | Legacy P2PKH, m/44'/0'         | `xna-old-legacy`           |
+ * | `xna-pq`          | AuthScript v1 + PQ key (nc1p)  | `xna-authscript`           |
+ * | `xna-pq-test`     | AuthScript v1 + PQ key (tnc1p) | `xna-authscript-test`      |
+ *
+ * (key-5 `xna` is strict ECDSA v3 and key-5 `xna-pq` is strict PQ v2.) Use
+ * `fromNeuraiKeyNetwork()` to translate a key-5 name.
  */
 export type NetworkType =
   | "xna"

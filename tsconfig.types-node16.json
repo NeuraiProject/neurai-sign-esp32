@@ -1,0 +1,11 @@
+{
+  // node16 decides the module format of each declaration file strictly:
+  // `import` must get ESM declarations (dist/index.d.ts) and `require`
+  // CommonJS ones (dist/index.d.cts). Up to 0.6.1 `require` got index.d.ts and
+  // consumer.cts failed with TS1471.
+  "extends": "./tsconfig.types-nodenext.json",
+  "compilerOptions": {
+    "module": "Node16",
+    "moduleResolution": "Node16"
+  }
+}

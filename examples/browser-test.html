@@ -76,8 +76,8 @@
         <p class="muted">
           Reads device info over Web Serial using
           <code>../dist/browser.js</code>. The device exposes only its ML-DSA-44
-          public key; <strong>this page derives the <code>tnq1…</code>
-          address</strong> from that pubkey and the mode declared in
+          public key; <strong>this page derives the <code>tnc1p…</code>
+          address</strong> (generic AuthScript witness v1) from that pubkey and the mode declared in
           <code>info</code> (<code>key_type=pq</code>, <code>network=NeuraiTest</code>).
         </p>
         <p class="muted">
@@ -191,7 +191,7 @@
           log("error", "Library not loaded (see the [module] message above).", "err");
           return;
         }
-        const { NeuraiESP32, decodeAddress, isPQAddress } = lib;
+        const { NeuraiESP32, decodeAddress, isWitnessAddress } = lib;
         connectBtn.disabled = true;
         device = new NeuraiESP32();
         try {
@@ -211,8 +211,9 @@
             );
           }
 
-          // 2) get_address → the device returns only the pubkey; the library
-          //    derives the tnq1… address from (network, key_type).
+          // 2) get_address → the device returns only the pubkey (+ auth_type /
+          //    witness_script); the library derives the tnc1p… address from
+          //    (network, key_type).
           log("action", "confirm on the device to reveal the address…");
           const addr = await device.getAddress();
           log("get_address", {
@@ -224,9 +225,9 @@
           $("result").hidden = false;
           $("address").textContent = addr.address;
 
-          const isPQ = isPQAddress(addr.address);
+          const isPQ = isWitnessAddress(addr.address);
           $("address-note").innerHTML = isPQ
-            ? '<span class="badge">PQ AuthScript · witness v1</span> ' +
+            ? '<span class="badge">PQ AuthScript · witness v1 (nc1p/tnc1p)</span> ' +
               '<span class="ok">address derived on the host from the pubkey</span>'
             : '<span class="badge">Legacy P2PKH</span>';
 

@@ -1,0 +1,23 @@
+{
+  // Type-checks the built declarations the way applications consume them:
+  // ESM (dist/index.d.ts, ESM because the package is "type": "module"),
+  // CommonJS (dist/index.d.cts), the browser and the React Native entries,
+  // with skipLibCheck: false (tsc's default) so errors inside the declarations
+  // are reported. NodeNext here; see the -node16 and -bundler variants.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "types": []
+  },
+  "files": [
+    "types-test/consumer.mts",
+    "types-test/consumer.cts",
+    "types-test/consumer-browser.mts",
+    "types-test/consumer-react-native.mts"
+  ]
+}

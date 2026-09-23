@@ -7,6 +7,8 @@ import {
 } from "./depin-identity.js";
 import { buildAssetTransferDisplayMetadata } from "./display.js";
 import {
+  AUTHSCRIPT_FAMILIES,
+  fromNeuraiKeyNetwork,
   getNetwork,
   getPQNetworkParams,
   resolveNetwork,
@@ -14,6 +16,8 @@ import {
   neuraiLegacyTestnet,
   neuraiMainnet,
   neuraiPQMainnet,
+  neuraiPQStrictMainnet,
+  neuraiPQStrictTestnet,
   neuraiPQTestnet,
   neuraiTestnet,
 } from "./networks.js";
@@ -26,9 +30,14 @@ import {
 } from "./psbt.js";
 import {
   DEFAULT_WITNESS_SCRIPT_HEX,
+  authScriptCommitment,
   decodeAddress,
+  ecdsaAddressFromPublicKey,
+  ecdsaCommitment,
   encodeDestinationScript,
+  getAddressFamily,
   isPQAddress,
+  isWitnessAddress,
   pqAddressFromPublicKey,
   pqAuthDescriptor,
   pqCommitment,
@@ -41,7 +50,7 @@ import {
   parseSignedPQTransaction,
   extractPQWitness,
 } from "./pq-tx.js";
-import { pqAuthScriptSighash } from "./pq-sighash.js";
+import { pqAuthScriptSighash, strictAuthScriptSighash } from "./pq-sighash.js";
 import { SerialConnection } from "./serial.js";
 
 const api = {
@@ -59,20 +68,29 @@ const api = {
   buildAssetTransferDisplayMetadata,
   getNetwork,
   resolveNetwork,
+  fromNeuraiKeyNetwork,
   getPQNetworkParams,
+  AUTHSCRIPT_FAMILIES,
   neuraiMainnet,
   neuraiTestnet,
   neuraiLegacyMainnet,
   neuraiLegacyTestnet,
   neuraiPQMainnet,
   neuraiPQTestnet,
-  // PQ address / AuthScript helpers
+  neuraiPQStrictMainnet,
+  neuraiPQStrictTestnet,
+  // Address / AuthScript helpers
   isPQAddress,
+  isWitnessAddress,
+  getAddressFamily,
   decodeAddress,
   encodeDestinationScript,
   publicKeyToAddress,
   pqAddressFromPublicKey,
+  ecdsaAddressFromPublicKey,
+  authScriptCommitment,
   pqCommitment,
+  ecdsaCommitment,
   pqAuthDescriptor,
   DEFAULT_WITNESS_SCRIPT_HEX,
   // PQ raw-transaction builder
@@ -80,6 +98,7 @@ const api = {
   parseSignedPQTransaction,
   extractPQWitness,
   pqAuthScriptSighash,
+  strictAuthScriptSighash,
   MAX_PQ_INPUTS,
   MAX_OUTPUTS,
 };

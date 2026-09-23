@@ -26,6 +26,13 @@
  * ones for authentication, so this module normalises to low-s and derives the
  * recovery id by trying all four candidates against the pubkey the device
  * itself declared. Every signature is verified here before it is handed back.
+ *
+ * The DePIN identity is always a Legacy Base58 P2PKH address (the node's DePIN
+ * messaging is P2PKH-only): m/44'/1900'/100'/0/0 on mainnet and
+ * m/44'/1'/100'/0/0 on testnet. In @neuraiproject/neurai-key 5 terms that is
+ * the "xna-legacy" / "xna-legacy-test" network (key-5 "xna" is the strict
+ * ECDSA witness v3 family, which DePIN does not accept). The device reports the
+ * network as "xna" / "xna-test" in this package's naming.
  */
 
 import { Buffer } from "buffer";
@@ -145,6 +152,7 @@ const SECP256K1_ORDER = BigInt(
   "0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141"
 );
 const SECP256K1_HALF_ORDER = SECP256K1_ORDER / 2n;
+// Legacy P2PKH paths (neurai-key 5 "xna-legacy" / "xna-legacy-test"); DePIN is P2PKH-only.
 const DEPIN_IDENTITY_PATHS: Readonly<Record<DepinAdapterNetwork, string>> = {
   mainnet: "m/44'/1900'/100'/0/0",
   test: "m/44'/1'/100'/0/0",

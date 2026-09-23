@@ -11,9 +11,16 @@ Uses [bitcoinjs-lib](https://www.npmjs.com/package/bitcoinjs-lib) v7 for
 PSBT construction and the Web Serial API for device communication.
 
 It also supports **Post-Quantum (ML-DSA-44 / AuthScript) addresses**: sending to
-PQ addresses (`nq1…`/`tnq1…`) and spending from them. The library auto-detects
-the device mode from `info` and routes accordingly — see
-[Post-Quantum support](#post-quantum-pq--ml-dsa-44-support).
+them and spending from the device's PQ address (`nc1p…`/`tnc1p…`). The library
+auto-detects the device mode from `info` and routes accordingly — see
+[Post-Quantum support](#post-quantum-pq--ml-dsa-44-support). Outputs can pay to
+every Neurai address type — see [Address types](#address-types).
+
+> **0.7.0 follows the new Neurai address types** (node Neurai-DePIN,
+> `@neuraiproject/neurai-key` 5): the device's PQ address is now encoded as
+> `nc1p…`/`tnc1p…` (it used to be `nq1p…`/`tnq1p…`, which the node rejects) and
+> `nq1…`/`tnq1…` now means strict ECDSA witness v3. See
+> [Upgrading to 0.7.0](#upgrading-to-070).
 
 ##
 
@@ -24,7 +31,9 @@ This library supports:
 - Asset transfers
 - BIP32 account discovery via `get_bip32_pubkey`
 - Message signing (prove address ownership)
-- **Post-Quantum addresses (ML-DSA-44 / AuthScript)** — send to and spend from `nq1…`/`tnq1…`
+- **Post-Quantum addresses (ML-DSA-44 / AuthScript)** — send to and spend from `nc1p…`/`tnc1p…`
+- Sending to every Neurai address type: Legacy P2PKH, `nc1p…`, `pq1z…`, `nq1r…`
+- Strict ECDSA witness v3 (`nq1r…`) inputs through `sign_psbt` (firmware built with uNeurai >= 0.2.0)
 
 Asset transfers use the same PSBT signing flow as XNA transfers. The transaction
 outputs are still signed from the raw unsigned transaction, while optional
@@ -345,9 +354,9 @@ await identity.session.ensure({ minRemainingSeconds: 60 });
 > `depin_sign_auth` and session permissions are **not implemented in current
 > firmware yet** — the contract they must satisfy is specified, and exercised
 > by a cryptographically faithful device mock, in this package's tests.
-> `@neuraiproject/neurai-depin-msg@3.1.0` must be published before installing
-> this repository from scratch or publishing `neurai-sign-esp32@0.6.0`. The
-> package has no runtime dependency on `neurai-depin-msg`; it is a `^3.1.0`
+> `@neuraiproject/neurai-depin-msg@3.1.2` must be published before installing
+> this repository from scratch or publishing `neurai-sign-esp32@0.7.0`. The
+> package has no runtime dependency on `neurai-depin-msg`; it is a `^3.1.2`
 > development dependency used only by the integration tests. The package gate
 > validates the adapter from a clean `neurai-sign-esp32` tarball.
 
@@ -407,12 +416,22 @@ orthogonal axes:
 
 The library reads `info.key_type` and routes automatically — the same
 `getAddress()` / `signTransaction()` calls work in both modes. PQ uses the
-AuthScript witness-v1 format (`nq1…` mainnet / `tnq1…` testnet), which cannot be
-represented in a PSBT, so spending from PQ uses a raw-transaction transport
-(`sign_tx`) under the hood. See [`docs/pq-protocol-design.md`](./docs/pq-protocol-design.md).
+generic AuthScript witness-v1 format (`nc1p…` mainnet / `tnc1p…` testnet;
+authType `0x01`, witnessScript `OP_TRUE`), which cannot be represented in a
+PSBT, so spending from PQ uses a raw-transaction transport (`sign_tx`) under the
+hood. See [`docs/pq-protocol-design.md`](./docs/pq-protocol-design.md).
 
 > The device exposes **only the public key** of its single address; the library
-> derives the `nq1…`/`tnq1…` address from that pubkey + mode.
+> derives the `nc1p…`/`tnc1p…` address from that pubkey + mode. The firmware
+> sends `auth_type` / `witness_script` in snake_case; `getAddress()` returns them
+> as `authType` / `witnessScript`.
+
+> Firmware built against uNeurai < 0.2.0 still reports its address as
+> `nq1p…`/`tnq1p…` in `info`; `getInfo()` / `getAddress()` re-encode it to the
+> valid `nc1p…`/`tnc1p…` form (same scriptPubKey), so it keeps working as a
+> change address. The strict PQ family (witness v2, `pq1z…`) is not produced by
+> the current firmware; `sign_tx` refuses v2/v3 prevouts before contacting the
+> device.
 
 ### Read a PQ address
 
@@ -427,20 +446,22 @@ console.log(info.network);  // "NeuraiTest"
 // In PQ mode the device returns only the pubkey; the library derives the address.
 const addr = await device.getAddress(); // requires confirmation on device
 console.log(addr.type);       // "pq"
-console.log(addr.address);    // "tnq1..."
+console.log(addr.address);    // "tnc1p..."
 console.log(addr.commitment); // 32-byte AuthScript commitment (hex)
 ```
 
 ### Send to a PQ address (from a legacy ECDSA wallet)
 
-No special handling is needed: pass a `nq1…`/`tnq1…` destination to
-`signTransaction`/`buildPSBT`. The library encodes the AuthScript output script
-automatically; the ECDSA inputs are still signed via `sign_psbt`.
+No special handling is needed: pass any AuthScript destination (`tnc1p…`,
+`tpq1z…`, `tnq1r…`, or the mainnet forms) to `signTransaction`/`buildPSBT`. The
+library encodes the output script (`OP_1`/`OP_2`/`OP_3` `0x20 <commitment>`)
+automatically and checks that the address belongs to the PSBT's chain; the
+ECDSA inputs are still signed via `sign_psbt`.
 
 ```javascript
 const result = await device.signTransaction({
   utxos: [/* legacy P2PKH UTXOs with rawTxHex */],
-  outputs: [{ address: "tnq1...", value: 100000000 }], // PQ destination
+  outputs: [{ address: "tnc1p...", value: 100000000 }], // PQ destination
   changeAddress: address,
 });
 ```
@@ -459,12 +480,12 @@ const result = await device.signTransaction({
       txid: "abcd1234....",
       vout: 0,
       satoshis: 100000000,
-      scriptPubKey: "5120<32-byte commitment>", // the PQ address script
+      scriptPubKey: "5120<32-byte commitment>", // the PQ address script (witness v1)
       type: "pq",
       // sighashAmount: 0,  // use 0 for asset-wrapped inputs
     },
   ],
-  outputs: [{ address: "tnq1...", value: 50000000 }],
+  outputs: [{ address: "tnc1p...", value: 50000000 }],
   // changeAddress defaults to the device's PQ address
 });
 
@@ -496,6 +517,24 @@ const sighash = pqAuthScriptSighash({
 const ok = ml_dsa44.verify(w.signature, sighash, w.pubkey); // verify(sig, msg, pub)
 ```
 
+`pqAuthScriptSighash` computes the generic witness-v1 sighash by default. The
+strict families use a different preimage (the witness version byte is written
+before `authType`, and the scriptCode is always `OP_TRUE`); a v1-style
+signature is **not** valid for them:
+
+```javascript
+import { strictAuthScriptSighash } from "@neuraiproject/neurai-sign-esp32";
+
+// Strict PQ v2 (pq1z…) or strict ECDSA v3 (nq1r…) input
+const h = strictAuthScriptSighash({ tx, inputIndex: 0, amount, witnessVersion: 2 });
+// witness: [authType, sig||hashType, pubkey, 0x51] (v2: authType 0x01 + 0x05||pq_pubkey,
+//          v3: authType 0x02 + compressed secp256k1 pubkey)
+```
+
+The current firmware signs witness v1 only (`sign_tx`) and, with uNeurai >=
+0.2.0, strict ECDSA v3 inputs through `sign_psbt`; the strict sighash is here so
+hosts can verify or build strict spends (and for future firmware).
+
 [`examples/browser-test.html`](./examples/browser-test.html) demonstrates this
 full flow end-to-end (read PQ address → sign a test transaction → verify the
 ML-DSA-44 signature).
@@ -525,7 +564,7 @@ Suggested flow:
    `npx serve .` or `python3 -m http.server 8000`.
 3. Open `http://localhost:8000/examples/browser-test.html` in Chrome or Edge.
 4. Click `Conectar`, pick the port, and confirm on the device. The page shows the
-   derived `tnq1…` address.
+   derived `tnc1p…` address.
 5. Click `Firmar transacción de prueba` and confirm on the device. The page signs
    a fictitious transaction and shows `✓ Firma ML-DSA-44 VÁLIDA`.
 
@@ -615,7 +654,14 @@ After `npm run build`, the package publishes:
 - `dist/browser.js`: explicit browser ESM entry
 - `dist/react-native.js`: React Native entry (no Web Serial; adds the USB transport)
 - `dist/NeuraiSignESP32.global.js`: IIFE bundle exposing `globalThis.NeuraiSignESP32`
-- `dist/index.d.ts` / `dist/react-native.d.ts`: public types
+- `dist/index.d.ts` / `dist/react-native.d.ts`: public types (ESM)
+- `dist/index.d.cts`: the same types for `require` (CommonJS)
+
+`npm run test:types` compiles the consumers in `types-test/` (ESM, CommonJS,
+browser and React Native) against the built declarations in NodeNext, Node16
+and Bundler. `npm run test:package` packs the tarball, installs it in a clean
+project and checks runtime and types there, with TypeScript 5.3 too (the
+oldest release the declarations support).
 
 ## UTXO requirements
 
@@ -633,16 +679,66 @@ The public model has two orthogonal axes: **network** (`mainnet`/`testnet`) and
 **key_type** (`legacy`/`pq`). The device declares both via `info`. Internally
 these resolve to a `NetworkType` identifier:
 
-| network | key_type | Internal `NetworkType` | Coin type | Address prefix |
-|---|---|---|---|---|
-| mainnet | legacy | `xna` | 1900 | `N…` (P2PKH) |
-| testnet | legacy | `xna-test` | 1 | testnet P2PKH |
-| mainnet | pq | `xna-pq` | 1900 | `nq1…` (AuthScript) |
-| testnet | pq | `xna-pq-test` | 1 | `tnq1…` (AuthScript) |
+| network | key_type | Internal `NetworkType` | Coin type | Address prefix | neurai-key 5 name |
+|---|---|---|---|---|---|
+| mainnet | legacy | `xna` | 1900 | `N…` (P2PKH) | `xna-legacy` |
+| testnet | legacy | `xna-test` | 1 | `t…` (P2PKH) | `xna-legacy-test` |
+| mainnet | pq | `xna-pq` | 1900 | `nc1p…` (AuthScript v1) | `xna-authscript` |
+| testnet | pq | `xna-pq-test` | 1 | `tnc1p…` (AuthScript v1) | `xna-authscript-test` |
 
 `xna-legacy` / `xna-legacy-test` (coin type 0) remain available for the legacy
-coin-type-0 derivation and are unrelated to `key_type: "legacy"`. Use
+coin-type-0 derivation and are unrelated to `key_type: "legacy"` (neurai-key 5
+calls the mainnet one `xna-old-legacy`). Use
 `resolveNetwork(network, keyType)` to map the two axes to a `NetworkType`.
+
+### Naming differences with `@neuraiproject/neurai-key` 5
+
+This package's `NetworkType` names predate neurai-key 5 and keep their meaning.
+Three of them are spelled like key-5 networks that mean something else:
+
+| name | here | in neurai-key 5 |
+|---|---|---|
+| `xna` | Legacy P2PKH, coin type 1900 | strict ECDSA witness v3 (`nq1r…`) |
+| `xna-legacy` | Legacy P2PKH, coin type 0 | Legacy P2PKH, coin type 1900 |
+| `xna-pq` | AuthScript v1 with a PQ key (`nc1p…`) | strict PQ witness v2 (`pq1z…`) |
+
+- `getNetwork()` also accepts the key-5 names that are unambiguous here:
+  `xna-old-legacy` (= `xna-legacy`), `xna-authscript` / `xna-authscript-test`
+  (= `xna-pq` / `xna-pq-test`).
+- `fromNeuraiKeyNetwork(name)` translates a key-5 name with key-5 semantics
+  (`"xna-legacy"` → `"xna"`, …) and throws a descriptive error for the key-5
+  families the device flows do not produce (`xna`/`xna-test`: strict ECDSA,
+  `xna-pq`/`xna-pq-test`: strict PQ).
+- The DePIN identity is always Legacy P2PKH (`m/44'/1900'/100'/0/0`, or
+  `m/44'/1'/100'/0/0` on testnet), i.e. neurai-key 5 `xna-legacy` /
+  `xna-legacy-test`; the node's DePIN messaging does not accept witness
+  addresses.
+
+## Address types
+
+| Family | Witness | HRP (main / test) | scriptPubKey | authType | witnessScript | neurai-key 5 |
+|---|---|---|---|---|---|---|
+| Legacy P2PKH | — | Base58 `N…` / `t…` | `76a914…88ac` | — | — | `xna-legacy`, `xna-old-legacy` |
+| Generic AuthScript | v1 | `nc` / `tnc` → `nc1p…` | `51 20 <C>` | any | any | `xna-authscript` |
+| Strict PQ (ML-DSA-44) | v2 | `pq` / `tpq` → `pq1z…` | `52 20 <C>` | `0x01` | `0x51` (fixed) | `xna-pq` |
+| Strict ECDSA (secp256k1) | v3 | `nq` / `tnq` → `nq1r…` | `53 20 <C>` | `0x02` | `0x51` (fixed) | `xna` |
+
+`C = taggedHash("NeuraiAuthScript", witnessVersion || auth_descriptor || SHA256(witnessScript))`.
+
+- `decodeAddress()` follows the node: Bech32m first (any case, only these
+  HRP/version pairs), Base58 otherwise. `nq1p…`/`tnq1p…` (the old witness-v1
+  encoding) is rejected with a hint to use `nc1p…`/`tnc1p…`. The result keeps
+  `type: "pq"` for every Bech32m address (as before) and adds `family`
+  (`"authscript"` | `"pq"` | `"ecdsa"`), `witnessVersion` and `network`.
+- `encodeDestinationScript()` emits `OP_1`/`OP_2`/`OP_3 0x20 <C>`.
+- **Activation:** the strict families (v2/v3) are active only on regtest for
+  now. Before activation the node refuses `pq1…`/`nq1…` addresses because an
+  `OP_2`/`OP_3` output is anyone-can-spend there. The library cannot know the
+  activation state of the target chain: do not pay to v2/v3 addresses where
+  they are not active.
+- PSBT inputs: P2PKH, or strict ECDSA v3 prevouts (the finalizer builds the
+  witness `[0x02, sig, pubkey, 0x51]`; needs firmware with uNeurai >= 0.2.0).
+  Generic v1 and strict v2 inputs cannot go through a PSBT.
 
 ## Chunked serial writes (important)
 
@@ -685,8 +781,9 @@ using JSON messages. Supported commands:
 | `depin_session_end` | None (session-key gated) | 10s |
 
 `info` reports `key_type` (`"legacy"` | `"pq"`). In PQ mode, `get_address`
-returns only the public key (the library derives the address) and signing uses
-`sign_tx` (raw transaction) instead of `sign_psbt`.
+returns only the public key plus `auth_type` / `witness_script` (the library
+derives the address) and signing uses `sign_tx` (raw transaction) instead of
+`sign_psbt`. `sign_tx` signs generic AuthScript v1 inputs only.
 
 While the device is **locked** (encrypted seed stored, PIN pending) or
 **unconfigured** (no seed), the firmware rejects every command except
@@ -730,18 +827,27 @@ Main class for device interaction.
 
 | Function | Description |
 |---|---|
-| `isPQAddress(addr)` | True for `nq1…`/`tnq1…` AuthScript addresses |
-| `decodeAddress(addr)` | Decode a legacy or PQ address (`{ type, commitment \| hash, … }`) |
+| `isWitnessAddress(addr)` | True for valid `nc1p…`/`pq1z…`/`nq1r…` (and testnet) AuthScript addresses |
+| `isPQAddress(addr)` | Deprecated alias of `isWitnessAddress` (true for every AuthScript family, not only ML-DSA keys) |
+| `getAddressFamily(addr)` | `"legacy"` \| `"authscript"` \| `"pq"` \| `"ecdsa"` |
+| `decodeAddress(addr)` | Decode any address (`{ type, family, witnessVersion, network, commitment \| hash, … }`) |
 | `encodeDestinationScript(addr)` | Output scriptPubKey for any supported address |
-| `publicKeyToAddress(pubkeyHex, { network, keyType })` | Derive an address from a public key + mode |
+| `publicKeyToAddress(pubkeyHex, { network, keyType, witnessVersion? })` | Derive an address from a public key + mode (`pq`: v1 `nc1p…` by default, `witnessVersion: 2` for `pq1z…`) |
+| `pqAddressFromPublicKey(pubkey, params)` | PQ address in the family of `params` (`getPQNetworkParams(network, 1 \| 2)`) |
+| `ecdsaAddressFromPublicKey(pubkey33, network)` | Strict ECDSA v3 address (`nq1r…`/`tnq1r…`) |
+| `authScriptCommitment(opts)` / `pqCommitment` / `ecdsaCommitment` | Versioned AuthScript commitments |
+| `normalizeDeviceAuthScriptAddress(addr)` | Re-encode a pre-0.2.0 firmware `nq1p…`/`tnq1p…` address as `nc1p…`/`tnc1p…` |
 | `resolveNetwork(network, keyType)` | Map the two axes to a `NetworkType` |
-| `buildUnsignedPQTransaction(opts)` | Build the unsigned raw tx + per-input metadata for `sign_tx` |
+| `fromNeuraiKeyNetwork(name)` | Translate a neurai-key 5 network name to a `NetworkType` |
+| `buildUnsignedPQTransaction(opts)` | Build the unsigned raw tx + per-input metadata for `sign_tx` (witness v1 prevouts only) |
 | `extractPQWitness(signedTxHex, index?)` | Decode the AuthScript witness (`authType`, `signature`, `pubkey`, `witnessScript`) |
-| `pqAuthScriptSighash(opts)` | Recompute the AuthScript sighash (to verify device signatures) |
+| `pqAuthScriptSighash(opts)` | Recompute the AuthScript sighash (to verify device signatures); witness v1 by default, `witnessVersion: 2 \| 3` for strict |
+| `strictAuthScriptSighash(opts)` | Strict v2 / v3 sighash (`… locktime \|\| witnessVersion \|\| authType \|\| hashType`) |
 
 ### `buildPSBT(options)`
 
-Build an unsigned PSBT for P2PKH. Returns base64 string.
+Build an unsigned PSBT for P2PKH (and strict ECDSA v3) inputs. Outputs may pay
+to any Neurai address type. Returns base64 string.
 
 ### `buildPSBTFromRawTransaction(options)`
 
@@ -824,3 +930,57 @@ those strings. The reviewed firmware reads `amount` using ArduinoJson
 ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
+
+## Upgrading to 0.7.0
+
+0.7.0 follows the address types of the Neurai node (Neurai-DePIN) and
+`@neuraiproject/neurai-key` 5.
+
+Breaking changes:
+
+- **PQ addresses are encoded as `nc1p…` / `tnc1p…`.** `neuraiPQMainnet` /
+  `neuraiPQTestnet` (and `getPQNetworkParams`) use the HRPs `nc` / `tnc`, so
+  `publicKeyToAddress(…, { keyType: "pq" })`, `pqAddressFromPublicKey` and
+  `getAddress()` return `nc1p…` / `tnc1p…`. The scriptPubKey (`5120<C>`) and the
+  commitment did not change: funds on an old `nq1p…` / `tnq1p…` address are
+  reachable through the re-encoded address.
+- **`nq1…` / `tnq1…` is the strict ECDSA family now.** `decodeAddress` rejects
+  the old witness-v1 `nq1p…` / `tnq1p…` form (with a hint), like the node, and
+  so do `encodeDestinationScript`, `buildPSBT` and `buildUnsignedPQTransaction`.
+- `isPQAddress` validates the address (Bech32m checksum, canonical HRP/version
+  pair) instead of matching the `nq1` / `tnq1` prefix, and is true for every
+  AuthScript family. It is deprecated in favour of `isWitnessAddress` /
+  `getAddressFamily`. Base58 addresses that start with `NQ1…` are no longer
+  misclassified.
+- `buildPSBT` checks that an AuthScript destination belongs to the PSBT's chain
+  (a testnet address in an `xna` PSBT throws) and estimates AuthScript outputs
+  at 43 bytes.
+- `pqAuthScriptSighash` throws for a sighash type other than `SIGHASH_ALL` and
+  for version-3 transactions (it used to return a hash the device and node would
+  not agree with); `buildUnsignedPQTransaction` and `signPqRawTransaction`
+  reject strict v2/v3 prevouts and version-3 transactions.
+
+Type declarations: `require` now gets CommonJS declarations
+(`dist/index.d.cts`). Up to 0.6.1 it got the ESM `dist/index.d.ts`, and a
+CommonJS project compiled with `moduleResolution` `node16` failed with TS1471.
+bitcoinjs-lib only ships ESM declarations, so `dist/index.d.cts` imports its
+types with a `resolution-mode` attribute: the declarations need TypeScript 5.3
+or later.
+
+Additions: `strictAuthScriptSighash` and `pqAuthScriptSighash({ witnessVersion })`,
+`AUTHSCRIPT_FAMILIES`, `isWitnessAddress`, `getAddressFamily`,
+`ecdsaAddressFromPublicKey`, `authScriptCommitment`, `ecdsaCommitment`,
+`normalizeDeviceAuthScriptAddress`, `fromNeuraiKeyNetwork`, the strict PQ
+params `neuraiPQStrictMainnet` / `neuraiPQStrictTestnet`, v3 PSBT finalization,
+and the snake_case `auth_type` / `witness_script` fields of `get_address`, which
+are now read (they used to be ignored).
+
+### Testing against a node
+
+`npm test` runs the unit tests (vectors from a Neurai-DePIN regtest node are in
+`src/pq-address.fixtures.ts`). `src/node-regtest.integration.test.ts` is an
+opt-in end-to-end check: set `NEURAI_REGTEST_CLI` to the `neurai-cli` command of
+a regtest node that knows the `nc` / `pq` / `nq` families and it funds v1, v2
+and v3 addresses derived by the library, signs spends with software keys
+standing in for the device, and checks them with `testmempoolaccept`.
+

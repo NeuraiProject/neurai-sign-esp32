@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
 import {
   MAX_PQ_INPUTS,
@@ -7,7 +8,13 @@ import {
 } from "./pq-tx.js";
 import type { IPQUTXO } from "./types.js";
 import {
+  NODE_EC_P2PKH,
+  NODE_EC_V3_ADDRESS,
+  NODE_EC_V3_SPK,
+  NODE_PQ_V2_ADDRESS,
+  NODE_PQ_V2_SPK,
   ORACLE_PQ_ADDRESS_TESTNET,
+  ORACLE_PQ_ADDRESS_TESTNET_OLD,
   ORACLE_PQ_COMMITMENT_HEX,
 } from "./pq-address.fixtures.js";
 
@@ -68,6 +75,68 @@ describe("buildUnsignedPQTransaction", () => {
         feeRate: 1,
       })
     ).toThrow(/Too many PQ inputs/);
+  });
+
+  it("pays to every address family", () => {
+    const { rawTxHex } = buildUnsignedPQTransaction({
+      utxos: [utxo()],
+      outputs: [
+        { address: NODE_PQ_V2_ADDRESS, value: 1_000 },
+        { address: NODE_EC_V3_ADDRESS, value: 1_000 },
+        { address: NODE_EC_P2PKH, value: 1_000 },
+      ],
+      changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
+      feeRate: 1,
+    });
+    const tx = bitcoin.Transaction.fromHex(rawTxHex);
+    expect(Buffer.from(tx.outs[0].script).toString("hex")).toBe(NODE_PQ_V2_SPK);
+    expect(Buffer.from(tx.outs[1].script).toString("hex")).toBe(NODE_EC_V3_SPK);
+    expect(Buffer.from(tx.outs[2].script).toString("hex")).toMatch(/^76a914/);
+  });
+
+  it("rejects strict v2 / v3 prevouts (sign_tx signs witness v1 only)", () => {
+    for (const [spk, version] of [[NODE_PQ_V2_SPK, 2], [NODE_EC_V3_SPK, 3]] as const) {
+      expect(() =>
+        buildUnsignedPQTransaction({
+          utxos: [utxo({ scriptPubKey: spk })],
+          outputs: [{ address: ORACLE_PQ_ADDRESS_TESTNET, value: 100_000 }],
+          changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
+          feeRate: 1,
+        })
+      ).toThrow(new RegExp(`witness v${version} output`));
+    }
+    // An asset-wrapped v1 prevout is accepted.
+    expect(() =>
+      buildUnsignedPQTransaction({
+        utxos: [utxo({ scriptPubKey: PQ_SCRIPT + "c016786e6174", sighashAmount: 0 }), utxo({ txid: "b".repeat(64) })],
+        outputs: [{ address: ORACLE_PQ_ADDRESS_TESTNET, value: 100_000 }],
+        changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
+        feeRate: 1,
+      })
+    ).not.toThrow();
+  });
+
+  it("rejects the old tnq1p… destination encoding", () => {
+    expect(() =>
+      buildUnsignedPQTransaction({
+        utxos: [utxo()],
+        outputs: [{ address: ORACLE_PQ_ADDRESS_TESTNET_OLD, value: 100_000 }],
+        changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
+        feeRate: 1,
+      })
+    ).toThrow(/nc1p… \/ tnc1p…/);
+  });
+
+  it("rejects version-3 transactions", () => {
+    expect(() =>
+      buildUnsignedPQTransaction({
+        utxos: [utxo()],
+        outputs: [{ address: ORACLE_PQ_ADDRESS_TESTNET, value: 100_000 }],
+        changeAddress: ORACLE_PQ_ADDRESS_TESTNET,
+        feeRate: 1,
+        version: 3,
+      })
+    ).toThrow(/version 3/);
   });
 
   it("throws on insufficient funds", () => {
