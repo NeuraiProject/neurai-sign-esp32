@@ -65,11 +65,12 @@ function installMockSerial(port: SerialPort) {
 }
 
 afterEach(() => {
-  delete (navigator as unknown as { serial?: Serial }).serial;
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
 beforeEach(() => {
+  vi.stubGlobal("navigator", {});
   vi.spyOn(console, "debug").mockImplementation(() => {});
   vi.spyOn(console, "error").mockImplementation(() => {});
 });

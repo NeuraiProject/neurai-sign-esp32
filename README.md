@@ -40,6 +40,16 @@ outputs are still signed from the raw unsigned transaction, while optional
 display metadata can be provided to the device so the firmware can show the
 asset name, transferred amount, destination address, and fee more clearly.
 
+## Reset testnet
+
+Before supplying UTXOs or PSBT inputs to this signing library, the host
+application must verify `getblockhash(0)` against
+`0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021`.
+The device does not query the chain. Discard UTXOs and PSBTs assembled from
+the previous testnet. All three AuthScript address families activate on the
+reset testnet at block 10; outputs included earlier have no AuthScript spend
+protection.
+
 ## Install
 
 ```
@@ -354,9 +364,9 @@ await identity.session.ensure({ minRemainingSeconds: 60 });
 > `depin_sign_auth` and session permissions are **not implemented in current
 > firmware yet** — the contract they must satisfy is specified, and exercised
 > by a cryptographically faithful device mock, in this package's tests.
-> `@neuraiproject/neurai-depin-msg@3.1.2` must be published before installing
-> this repository from scratch or publishing `neurai-sign-esp32@0.7.0`. The
-> package has no runtime dependency on `neurai-depin-msg`; it is a `^3.1.2`
+> `@neuraiproject/neurai-depin-msg@3.1.3` is published and required for
+> installing this repository from scratch or publishing `neurai-sign-esp32@0.7.1`.
+> The package has no runtime dependency on `neurai-depin-msg`; it is a `^3.1.3`
 > development dependency used only by the integration tests. The package gate
 > validates the adapter from a clean `neurai-sign-esp32` tarball.
 
@@ -731,8 +741,8 @@ Three of them are spelled like key-5 networks that mean something else:
   `type: "pq"` for every Bech32m address (as before) and adds `family`
   (`"authscript"` | `"pq"` | `"ecdsa"`), `witnessVersion` and `network`.
 - `encodeDestinationScript()` emits `OP_1`/`OP_2`/`OP_3 0x20 <C>`.
-- **Activation:** the strict families (v2/v3) are active only on regtest for
-  now. Before activation the node refuses `pq1…`/`nq1…` addresses because an
+- **Activation:** all three AuthScript families activate on the reset testnet
+  at block 10 and on regtest at block 1. Before activation the node refuses `pq1…`/`nq1…` addresses because an
   `OP_2`/`OP_3` output is anyone-can-spend there. The library cannot know the
   activation state of the target chain: do not pay to v2/v3 addresses where
   they are not active.
@@ -930,6 +940,13 @@ those strings. The reviewed firmware reads `amount` using ArduinoJson
 ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
+
+## Upgrading to 0.7.1
+
+0.7.1 requires the published `neurai-depin-msg@3.1.3` for development and
+integration tests. The runtime API is unchanged. The reset testnet guide now
+records the new genesis, and Web Serial tests run on Node 20. Hardware and
+firmware validation is still required before using the adapter on a device.
 
 ## Upgrading to 0.7.0
 
