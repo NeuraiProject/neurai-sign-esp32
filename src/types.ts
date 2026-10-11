@@ -18,7 +18,10 @@ export interface IUTXO {
   scriptPubKey: string;
   /** Value in satoshis */
   satoshis: RawAmount;
-  /** Full raw transaction hex (required for P2PKH nonWitnessUtxo) */
+  /**
+   * Full raw previous transaction hex (the PSBT `nonWitnessUtxo`). Any Neurai
+   * version, version 3 included; it must hash to `txid`.
+   */
   rawTxHex: string;
 }
 
@@ -56,6 +59,7 @@ export interface IPSBTInputMetadata {
   txid: string;
   vout: number;
   sequence?: number;
+  /** Full raw previous transaction hex, any Neurai version; it must hash to `txid`. */
   rawTxHex: string;
   pubkey?: string;
   masterFingerprint?: string;

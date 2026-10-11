@@ -677,7 +677,9 @@ oldest release the declarations support).
 
 Each UTXO requires the `rawTxHex` field — the full raw hex of the previous
 transaction. This is needed because P2PKH inputs use `nonWitnessUtxo` in the
-PSBT spec. You can get it from your Neurai node:
+PSBT spec. Any Neurai transaction version is accepted, version 3 (NIP-014
+reference inputs) included, and it must hash to the txid the input spends. You
+can get it from your Neurai node:
 
 ```javascript
 const rawTxHex = await rpc("getrawtransaction", [txid]);
@@ -940,6 +942,20 @@ those strings. The reviewed firmware reads `amount` using ArduinoJson
 ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
+
+## Upgrading to 0.7.2
+
+Previous transactions may be Neurai version-3 transactions (privacy pools and
+state threads create them; NIP-014 serializes their reference inputs, even an
+empty list). bitcoinjs-lib cannot read them and failed with "Transaction has
+unexpected data" while building or finalizing a PSBT that spends one of their
+outputs. The PSBT helpers now read every `nonWitnessUtxo` with the codec of
+`@neuraiproject/neurai-create-transaction` (new dependency), check that it
+hashes to the txid the input spends, and finalize inputs without
+`Psbt.finalizeInput`, which would parse it again. A version-3 transaction *to
+sign* is refused with an explicit error: a PSBT has no field for its reference
+inputs. The device firmware (uNeurai) must also parse version-3 previous
+transactions before it can sign such inputs.
 
 ## Upgrading to 0.7.1
 

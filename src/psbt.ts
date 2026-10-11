@@ -16,11 +16,17 @@
  * `[0x02, sig, pubkey, 0x51]`. Generic AuthScript v1 and strict PQ v2 inputs
  * cannot be signed through a PSBT (see `buildUnsignedPQTransaction` /
  * `sign_tx` for v1).
+ *
+ * Previous transactions (`nonWitnessUtxo`) may be any Neurai transaction,
+ * version 3 included. bitcoinjs-lib cannot read those (see `previousOutput`),
+ * so this module never lets it parse a `nonWitnessUtxo`: inputs get it through
+ * the bip174 layer and are finalized without `Psbt.finalizeInput`.
  */
 
 import { estimateFee, toRawAmount } from "./amounts.js";
 import { Buffer } from "buffer";
 import * as bitcoin from "bitcoinjs-lib";
+import { computeTxid, parseTransaction } from "@neuraiproject/neurai-create-transaction";
 import { getNetwork } from "./networks.js";
 import {
   authScriptWitnessVersionOfScript,
@@ -48,7 +54,6 @@ type PsbtCache = {
   __EXTRACTED_TX?: bitcoin.Transaction;
   __FEE?: bigint;
   __FEE_RATE?: number;
-  __NON_WITNESS_UTXO_TX_CACHE?: Record<number, bitcoin.Transaction>;
 };
 
 /** Estimated size of a P2PKH (148) or strict ECDSA v3 (69) input. */
@@ -118,20 +123,67 @@ function checkPartialSigSighashes(input: PsbtInput) {
   input.sighashType = normalizedSighashType;
 }
 
-function nonWitnessUtxoTxFromCache(cache: PsbtCache, input: PsbtInput, inputIndex: number) {
-  const existing = cache.__NON_WITNESS_UTXO_TX_CACHE?.[inputIndex];
-  if (existing) {
-    return existing;
-  }
+/** Display-order (RPC) txid of a bitcoinjs input hash. */
+function displayTxid(hash: Uint8Array): string {
+  return Buffer.from(hash).reverse().toString("hex");
+}
 
-  if (!input.nonWitnessUtxo) {
-    throw new Error(`Missing nonWitnessUtxo for input #${inputIndex}`);
+/**
+ * The output an input spends, read from its `nonWitnessUtxo` with the Neurai
+ * transaction codec. bitcoinjs-lib cannot read Neurai version-3 transactions:
+ * NIP-014 serializes their reference inputs (`vrefin`), even an empty list,
+ * after the outputs, and bitcoinjs-lib rejects the leftover bytes with
+ * "Transaction has unexpected data". The previous transaction must hash to the
+ * txid the input spends, so its amounts are the real ones. Returns null when
+ * it has no output `vout`.
+ */
+function previousOutput(
+  rawTx: Uint8Array,
+  txid: string,
+  vout: number,
+  inputIndex: number
+): { script: Buffer; value: bigint } | null {
+  const hex = Buffer.from(rawTx).toString("hex");
+  if (computeTxid(hex) !== txid.toLowerCase()) {
+    throw new Error(`Input #${inputIndex}: the previous transaction is not ${txid}`);
   }
+  const output = parseTransaction(hex).outputs[vout];
+  return output ? { script: Buffer.from(output.scriptPubKeyHex, "hex"), value: output.valueSats } : null;
+}
 
-  const tx = bitcoin.Transaction.fromBuffer(input.nonWitnessUtxo);
-  cache.__NON_WITNESS_UTXO_TX_CACHE ??= {};
-  cache.__NON_WITNESS_UTXO_TX_CACHE[inputIndex] = tx;
-  return tx;
+/**
+ * `psbt.addInput` with its previous transaction. The `nonWitnessUtxo` goes in
+ * through the bip174 layer: bitcoinjs-lib's `addInput` would parse it, which
+ * fails for version-3 transactions (see `previousOutput`, which checks it).
+ */
+function addInputWithPreviousTx(
+  psbt: bitcoin.Psbt,
+  inputData: Parameters<bitcoin.Psbt["addInput"]>[0],
+  rawTxHex: string
+): void {
+  const inputIndex = psbt.inputCount;
+  const nonWitnessUtxo = Buffer.from(rawTxHex, "hex");
+  // bitcoinjs-lib takes the hash as a display txid or in internal byte order.
+  const txid = typeof inputData.hash === "string" ? inputData.hash : displayTxid(inputData.hash);
+  if (!previousOutput(nonWitnessUtxo, txid, inputData.index, inputIndex)) {
+    throw new Error(`Input #${inputIndex}: the previous transaction has no output ${inputData.index}`);
+  }
+  psbt.addInput(inputData);
+  psbt.data.updateInput(inputIndex, { nonWitnessUtxo });
+}
+
+/**
+ * Set the final scripts of an input and drop its signing data, as
+ * `Psbt.finalizeInput` does, without letting bitcoinjs-lib parse the input's
+ * `nonWitnessUtxo` (see `previousOutput`).
+ */
+function setFinalScripts(
+  psbt: bitcoin.Psbt,
+  inputIndex: number,
+  finalScripts: { finalScriptSig: Buffer } | { finalScriptWitness: Buffer }
+): void {
+  psbt.data.updateInput(inputIndex, finalScripts);
+  psbt.data.clearFinalizedInput(inputIndex);
 }
 
 export function buildPSBT(options: IBuildPSBTOptions): string {
@@ -181,12 +233,7 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
   ];
 
   for (const utxo of utxos) {
-    psbt.addInput({
-      hash: utxo.txid,
-      index: utxo.vout,
-      nonWitnessUtxo: Buffer.from(utxo.rawTxHex, "hex"),
-      bip32Derivation,
-    });
+    addInputWithPreviousTx(psbt, { hash: utxo.txid, index: utxo.vout, bip32Derivation }, utxo.rawTxHex);
   }
 
   for (const output of outputs) {
@@ -206,6 +253,11 @@ export function buildPSBT(options: IBuildPSBTOptions): string {
 
 export function buildPSBTFromRawTransaction(options: IBuildPSBTFromRawOptions): string {
   const network = getNetwork(options.network);
+  if (parseTransaction(options.rawUnsignedTransaction).version === 3) {
+    throw new Error(
+      "A version-3 transaction cannot be signed through a PSBT: its NIP-014 reference inputs have no PSBT field"
+    );
+  }
   const tx = bitcoin.Transaction.fromHex(options.rawUnsignedTransaction);
   const psbt = new bitcoin.Psbt({ network });
 
@@ -224,7 +276,6 @@ export function buildPSBTFromRawTransaction(options: IBuildPSBTFromRawOptions): 
       hash: metadata.txid,
       index: metadata.vout,
       sequence: metadata.sequence ?? input.sequence,
-      nonWitnessUtxo: Buffer.from(metadata.rawTxHex, "hex"),
     };
 
     if (metadata.masterFingerprint && metadata.derivationPath && metadata.pubkey) {
@@ -241,7 +292,7 @@ export function buildPSBTFromRawTransaction(options: IBuildPSBTFromRawOptions): 
       inputData.sighashType = metadata.sighashType;
     }
 
-    psbt.addInput(inputData);
+    addInputWithPreviousTx(psbt, inputData, metadata.rawTxHex);
   }
 
   for (const output of tx.outs) {
@@ -459,8 +510,7 @@ function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean
       continue;
     }
 
-    const prevTx = bitcoin.Transaction.fromBuffer(nonWitnessUtxo);
-    const prevOut = prevTx.outs[txInput.index];
+    const prevOut = previousOutput(nonWitnessUtxo, displayTxid(txInput.hash), txInput.index, index);
     if (!prevOut) {
       if (requireAllInputs) {
         throw new Error(`Missing prevout to finalize input #${index}`);
@@ -468,7 +518,12 @@ function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean
       continue;
     }
 
-    const witnessVersion = authScriptWitnessVersionOfScript(Buffer.from(prevOut.script));
+    // The check Psbt.finalizeInput made before this module stopped using it.
+    if (input.sighashType !== undefined && getSignatureHashType(partialSig.signature) !== input.sighashType) {
+      throw new Error(`Input #${index}: the signature sighash does not match the input sighash type`);
+    }
+
+    const witnessVersion = authScriptWitnessVersionOfScript(prevOut.script);
     if (witnessVersion === 3) {
       // Strict ECDSA witness v3: the consensus template is exactly
       // [authType 0x02, sig||hashType, compressed pubkey, witnessScript OP_TRUE].
@@ -476,15 +531,14 @@ function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean
       if (pubkey.length !== 33) {
         throw new Error(`Input #${index}: strict ECDSA inputs need a compressed public key`);
       }
-      psbt.finalizeInput(index, () => ({
-        finalScriptSig: undefined,
+      setFinalScripts(psbt, index, {
         finalScriptWitness: witnessStackToScriptWitness([
           Buffer.from([0x02]),
           Buffer.from(partialSig.signature),
           pubkey,
           Buffer.from([0x51]),
         ]),
-      }));
+      });
       finalizedCount += 1;
       continue;
     }
@@ -495,13 +549,12 @@ function finalizeNeuraiP2pkhInputs(psbt: bitcoin.Psbt, requireAllInputs: boolean
       );
     }
 
-    psbt.finalizeInput(index, () => ({
-      finalScriptSig: bitcoin.script.compile([
+    setFinalScripts(psbt, index, {
+      finalScriptSig: Buffer.from(bitcoin.script.compile([
         partialSig.signature,
         partialSig.pubkey,
-      ]),
-      finalScriptWitness: undefined,
-    }));
+      ])),
+    });
     finalizedCount += 1;
   }
 
@@ -548,9 +601,7 @@ function inputFinalizeGetAmtsPartial(
       return;
     }
     if (input.nonWitnessUtxo) {
-      const nwTx = nonWitnessUtxoTxFromCache(cache, input, idx);
-      const vout = tx.ins[idx].index;
-      const out = nwTx.outs[vout];
+      const out = previousOutput(input.nonWitnessUtxo, displayTxid(tx.ins[idx].hash), tx.ins[idx].index, idx);
       if (!out) {
         if (requireAllInputs) {
           throw new Error(`Missing prevout amount for input #${idx}`);
