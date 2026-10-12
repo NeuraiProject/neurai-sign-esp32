@@ -212,7 +212,9 @@ function derToCompactLowS(derHex: string): Buffer {
       `Compact signature must be 64 bytes; got ${signature.length}`
     );
   }
-  const s = BigInt(`0x${signature.subarray(32).toString("hex")}`);
+  // Not subarray(32).toString("hex"): under Hermes that subarray is a plain
+  // Uint8Array, whose toString is not hex.
+  const s = BigInt(`0x${signature.toString("hex", 32)}`);
   if (s === 0n || s >= SECP256K1_ORDER) {
     throw new DepinDeviceIdentityError(
       "INVALID_DEVICE_SIGNATURE",
@@ -228,7 +230,8 @@ function derToCompactLowS(derHex: string): Buffer {
 
 function compactToDer(compact: Buffer): Buffer {
   const encoded = Buffer.from(bitcoin.script.signature.encode(compact, 0x01));
-  return encoded.subarray(0, encoded.length - 1);
+  // A copy, so it is a Buffer under Hermes too (a subarray there is a plain Uint8Array).
+  return Buffer.from(encoded.subarray(0, encoded.length - 1));
 }
 
 function assertOperationCount(value: unknown): void {

@@ -337,9 +337,11 @@ function applyMinimalDevicePsbt(originalPsbtBase64: string, signedPsbtBase64: st
       entries.push({ key, value: readBytes(valueLen.value) });
     }
   };
+  // A copy: under Hermes a subarray of the bundled Buffer is a plain Uint8Array,
+  // without toString("hex") / readUInt32LE.
   const readBytes = (length: number): Buffer => {
     if (offset + length > buffer.length) throw new Error("Format Error: Unexpected End of PSBT");
-    const bytes = buffer.subarray(offset, offset + length);
+    const bytes = Buffer.from(buffer.subarray(offset, offset + length));
     offset += length;
     return bytes;
   };
@@ -357,7 +359,7 @@ function applyMinimalDevicePsbt(originalPsbtBase64: string, signedPsbtBase64: st
     const partialSig: PsbtPartialSig[] = [];
     for (const { key, value } of readMap()) {
       if (key[0] === PSBT_IN_PARTIAL_SIG && key.length > 1) {
-        partialSig.push({ pubkeyHex: key.subarray(1).toString("hex"), signatureHex: value.toString("hex") });
+        partialSig.push({ pubkeyHex: key.toString("hex", 1), signatureHex: value.toString("hex") });
       } else if (key.length === 1 && key[0] === PSBT_IN_SIGHASH_TYPE && value.length === 4) {
         if (value.readUInt32LE(0) !== input.sighashType) {
           throw new Error(`NeuraiHW returned input #${index} with a sighash type the original PSBT does not have`);

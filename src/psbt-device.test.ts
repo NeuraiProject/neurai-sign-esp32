@@ -180,6 +180,43 @@ describe("the device's answer", () => {
   });
 });
 
+describe("under Hermes (React Native)", () => {
+  // There, subarray() of a Buffer from the bundled `buffer` package returns a
+  // plain Uint8Array: Buffer methods (toString("hex"), readUInt32LE) are gone.
+  // Node's Buffer has its own subarray; the polyfill inherits Uint8Array's. Replace both.
+  const nodeSubarray = Uint8Array.prototype.subarray;
+  const nodeBufferSubarray = Buffer.prototype.subarray;
+  function underHermes<T>(fn: () => T): T {
+    const hermesSubarray = function (this: Uint8Array, start?: number, end?: number) {
+      const view = nodeSubarray.call(this, start, end);
+      return new Uint8Array(view.buffer, view.byteOffset, view.length);
+    };
+    Uint8Array.prototype.subarray = hermesSubarray as typeof nodeSubarray;
+    Buffer.prototype.subarray = hermesSubarray as unknown as typeof nodeBufferSubarray;
+    try {
+      return fn();
+    } finally {
+      Uint8Array.prototype.subarray = nodeSubarray;
+      Buffer.prototype.subarray = nodeBufferSubarray;
+    }
+  }
+
+  it("builds the PSBT and finalizes the device's answer as under Node", () => {
+    const prev = previousTx(p2pkh);
+    expect(underHermes(() => psbtFor(prev, { sighashType: 0x01 }).psbt)).toBe(psbtFor(prev, { sighashType: 0x01 }).psbt);
+    const { psbt } = psbtFor(prev);
+    const answer = deviceAnswer(psbt);
+    expect(underHermes(() => finalizeSignedPSBT(psbt, answer, NETWORK))).toEqual(finalizeSignedPSBT(psbt, answer, NETWORK));
+    expect(() => underHermes(() => assertDeviceCanSignPSBT(psbt))).not.toThrow();
+  });
+
+  it("reads the firmware's minimal PSBT as under Node", () => {
+    const { psbt } = psbtFor(previousTx(p2pkh), { sighashType: 0x01 });
+    const answer = deviceAnswer(psbt, { withOutputs: false });
+    expect(underHermes(() => finalizeSignedPSBT(psbt, answer, NETWORK))).toEqual(finalizeSignedPSBT(psbt, answer, NETWORK));
+  });
+});
+
 describe("what is sent to the device", () => {
   it("rejects metadata that does not describe the transaction's input", () => {
     const prev = previousTx(p2pkh);

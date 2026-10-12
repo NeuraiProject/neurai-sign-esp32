@@ -790,4 +790,34 @@ describe("neuraiSignedMessageDigest", () => {
     const normalizedS = BigInt(`0x${recoverable.subarray(33).toString("hex")}`);
     expect(normalizedS).toBeLessThanOrEqual(order / 2n);
   });
+
+  it("gives the same recoverable form under Hermes (React Native)", () => {
+    // Under Hermes a subarray of the bundled Buffer is a plain Uint8Array, whose
+    // toString("hex") is not hex. Node's Buffer has its own subarray: replace both.
+    const order = BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
+    const digest = Buffer.alloc(32, 9);
+    const low = Buffer.from(ecc.sign(digest, DEVICE_PRIV));
+    const lowS = BigInt(`0x${low.subarray(32).toString("hex")}`);
+    const high = Buffer.concat([low.subarray(0, 32), Buffer.from((order - lowS).toString(16).padStart(64, "0"), "hex")]);
+    const encoded = Buffer.from(bitcoin.script.signature.encode(high, 0x01));
+    const derHex = encoded.subarray(0, encoded.length - 1).toString("hex");
+    const expected = derSignatureToRecoverable(derHex, digest, DEVICE_PUB_HEX);
+
+    const nodeSubarray = Uint8Array.prototype.subarray;
+    const nodeBufferSubarray = Buffer.prototype.subarray;
+    const hermesSubarray = function (this: Uint8Array, start?: number, end?: number) {
+      const view = nodeSubarray.call(this, start, end);
+      return new Uint8Array(view.buffer, view.byteOffset, view.length);
+    };
+    Uint8Array.prototype.subarray = hermesSubarray as typeof nodeSubarray;
+    Buffer.prototype.subarray = hermesSubarray as unknown as typeof nodeBufferSubarray;
+    let underHermes: string;
+    try {
+      underHermes = derSignatureToRecoverable(derHex, digest, DEVICE_PUB_HEX);
+    } finally {
+      Uint8Array.prototype.subarray = nodeSubarray;
+      Buffer.prototype.subarray = nodeBufferSubarray;
+    }
+    expect(underHermes).toBe(expected);
+  });
 });

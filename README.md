@@ -958,6 +958,20 @@ ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replac
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
 
+## Upgrading to 0.8.1
+
+React Native (Hermes): Buffer methods are no longer called on `subarray()`
+results. Under Hermes a subarray of the bundled Buffer is a plain `Uint8Array`,
+whose `toString("hex")` is not hex:
+
+- reading the firmware's minimal PSBT refused a valid device answer as "a PSBT
+  for a different transaction";
+- the DePIN device identity could not read the `s` value of a device signature
+  (`derSignatureToRecoverable`, message signatures), and failed.
+
+`src/psbt-device.test.ts` and `src/depin-identity.test.ts` run those paths with
+Hermes' `subarray`.
+
 ## Upgrading to 0.8.0
 
 The PSBT helpers no longer use bitcoinjs-lib's `Psbt`: they are built on the
