@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Dependencies not yet on npm, as local tarballs (see check-package.mjs).
+const localTarballs = (process.env.NEURAI_PACKAGE_CHECK_TARBALLS ?? "")
+  .split(",")
+  .map((path) => path.trim())
+  .filter(Boolean)
+  .map((path) => resolve(path));
 const temporaryRoot = mkdtempSync(join(tmpdir(), "neurai-sign-esp32-package-"));
 
 try {
@@ -28,7 +34,7 @@ try {
     type: "module",
     dependencies: { "@neuraiproject/neurai-sign-esp32": `file:${tarball}` },
   }));
-  execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund"], {
+  execFileSync("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", ...localTarballs], {
     cwd: temporaryRoot,
     stdio: "pipe",
   });

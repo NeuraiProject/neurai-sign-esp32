@@ -24,6 +24,7 @@ export type {
 
 // PSBT utilities
 export {
+  assertDeviceCanSignPSBT,
   buildPSBT,
   buildPSBTFromRawTransaction,
   finalizePSBT,

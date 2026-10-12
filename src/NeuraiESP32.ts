@@ -22,7 +22,7 @@ import { rawAmountForDevice, type RawAmount, type DecimalAmount } from "./amount
 import { normalizeSigningDisplay } from "./display.js";
 import { SerialConnection } from "./serial.js";
 import { Buffer } from "buffer";
-import { buildPSBT, finalizeSignedPSBT } from "./psbt.js";
+import { assertDeviceCanSignPSBT, buildPSBT, finalizeSignedPSBT } from "./psbt.js";
 import {
   DEFAULT_WITNESS_SCRIPT_HEX,
   normalizeDeviceAuthScriptAddress,
@@ -632,10 +632,16 @@ export class NeuraiESP32 {
     return status;
   }
 
+  /**
+   * Sign a PSBT on the device. What its firmware cannot sign (version-3
+   * transactions, version-3 previous transactions, covenant inputs) is
+   * rejected here, before the device is involved: see `assertDeviceCanSignPSBT`.
+   */
   async signPsbt(
     psbtBase64: string,
     display?: ISigningDisplayMetadata
   ): Promise<ISignPsbtResponse> {
+    assertDeviceCanSignPSBT(psbtBase64);
     const response = await this.serial.sendCommandFinal(
       {
         action: "sign_psbt",

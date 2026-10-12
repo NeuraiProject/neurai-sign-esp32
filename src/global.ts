@@ -22,6 +22,7 @@ import {
   neuraiTestnet,
 } from "./networks.js";
 import {
+  assertDeviceCanSignPSBT,
   buildPSBT,
   buildPSBTFromRawTransaction,
   finalizePSBT,
@@ -60,6 +61,7 @@ const api = {
   derSignatureToRecoverable,
   neuraiSignedMessageDigest,
   SerialConnection,
+  assertDeviceCanSignPSBT,
   buildPSBT,
   buildPSBTFromRawTransaction,
   finalizePSBT,

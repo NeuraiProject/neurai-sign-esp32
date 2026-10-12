@@ -19,11 +19,15 @@
 //      exports at runtime, using the TypeScript compiler API.
 //
 // Needs network access to the npm registry. Run with `npm run test:package`.
+//
+// A dependency released together with this package and not yet on npm can be
+// supplied as local tarballs (`npm pack` output), installed with it:
+//   NEURAI_PACKAGE_CHECK_TARBALLS=/path/a.tgz,/path/b.tgz npm run test:package
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -89,6 +93,13 @@ function entries() {
   ]);
 }
 
+const localTarballs = (process.env.NEURAI_PACKAGE_CHECK_TARBALLS ?? "")
+  .split(",")
+  .map((path) => path.trim())
+  .filter(Boolean)
+  .map((path) => resolve(path));
+if (localTarballs.length > 0) console.log(`local tarballs: ${localTarballs.join(", ")}`);
+
 const work = mkdtempSync(join(tmpdir(), "neurai-package-check-"));
 try {
   const tarball = run("npm", ["pack", "--pack-destination", work, "--silent"], ROOT).trim().split("\n").pop();
@@ -102,6 +113,7 @@ try {
       "install",
       "--no-audit",
       "--no-fund",
+      ...localTarballs,
       join(work, tarball),
       `typescript@${repoTypeScript}`,
       `typescript-min@npm:typescript@${MIN_TYPESCRIPT}`,

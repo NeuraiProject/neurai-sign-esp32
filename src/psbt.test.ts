@@ -1,10 +1,11 @@
 import { Buffer } from "buffer";
 import * as secp from "@bitcoinerlab/secp256k1";
-import { computeTxid, serializeTransaction } from "@neuraiproject/neurai-create-transaction";
+import { computeTxid, decodePsbt, serializeTransaction } from "@neuraiproject/neurai-create-transaction";
 import * as bitcoin from "bitcoinjs-lib";
 import ECPairFactory from "ecpair";
 import { describe, expect, it } from "vitest";
 import {
+  assertDeviceCanSignPSBT,
   buildPSBT,
   buildPSBTFromRawTransaction,
   finalizePSBT,
@@ -339,7 +340,7 @@ describe("PSBT helpers", () => {
       ],
     });
     expect(() => finalizeSignedPSBT(original, signedPsbt.toBase64(), "xna-test")).toThrow(
-      /witness v1 output, which cannot be signed through a PSBT/
+      /an AuthScript v1 input is finalized by its signer/
     );
   });
 
@@ -490,17 +491,25 @@ describe("previous transactions of every Neurai version", () => {
         rawUnsignedTransaction: unsigned.toHex(),
         inputs: [{ txid: prev.txid, vout: 0, rawTxHex: TESTNET_V3_TX }],
       })
-    ).toThrow(/is not/);
+    ).toThrow(/the previous transaction is [0-9a-f]{64}, but the input spends/);
   });
 
-  it("refuses to carry a version-3 transaction to sign", () => {
+  it("carries a version-3 transaction to sign (Neurai Connect), which the device refuses", () => {
     const prev = version3PreviousTx(Buffer.from("76a914" + "00".repeat(20) + "88ac", "hex"), 1000n);
-    expect(() =>
-      buildPSBTFromRawTransaction({
-        network: TEST_NETWORK,
-        rawUnsignedTransaction: prev.hex,
-        inputs: [{ txid: "11".repeat(32), vout: 0, rawTxHex: TESTNET_V3_TX }],
-      })
-    ).toThrow(/version-3 transaction cannot be signed through a PSBT/);
+    const spend = serializeTransaction({
+      version: 3,
+      inputs: [{ txid: prev.txid, vout: 0, scriptSigHex: "", sequence: 0xffffffff }],
+      outputs: [{ valueSats: 900n, scriptPubKeyHex: "76a914" + "00".repeat(20) + "88ac" }],
+      vrefin: [{ txid: "33".repeat(32), vout: 0 }],
+      locktime: 0,
+    });
+    const psbt = buildPSBTFromRawTransaction({
+      network: TEST_NETWORK,
+      rawUnsignedTransaction: spend,
+      inputs: [{ txid: prev.txid, vout: 0, rawTxHex: prev.hex }],
+    });
+    expect(decodePsbt(psbt).unsignedTx.version).toBe(3);
+    expect(decodePsbt(psbt).unsignedTx.vrefin).toEqual([{ txid: "33".repeat(32), vout: 0 }]);
+    expect(() => assertDeviceCanSignPSBT(psbt)).toThrow(/cannot sign a version-3 transaction/);
   });
 });

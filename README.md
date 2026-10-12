@@ -866,6 +866,10 @@ to any Neurai address type. Returns base64 string.
 Build an unsigned PSBT from an already-created raw unsigned transaction plus
 input metadata. This is the preferred path when the wallet already handles coin
 selection, fee calculation, asset outputs, and change outputs externally.
+`inputs[i]` must describe input `i` (`txid:vout`); unlocking data in the raw
+transaction is not carried. Any Neurai transaction version is accepted, and
+`witnessScript` puts the script behind an AuthScript input (a covenant) in the
+PSBT for signers that handle it (Neurai Connect); the device does not.
 
 ### `finalizePSBT(base64, network)`
 
@@ -873,13 +877,24 @@ Finalize a signed PSBT. Returns `{ txHex, txId }`.
 
 ### `finalizeSignedPSBT(originalPsbtBase64, signedPsbtBase64, network)`
 
-Merge a signed PSBT returned by the device with the original PSBT and finalize it.
-This helper also supports the minimal PSBT format returned by `uNeurai`, and
-includes fallback logic for legacy P2PKH finalization used by Neurai.
+Merge a signed PSBT (from the device or another signer) with the original PSBT,
+finalize the inputs it signed and extract the transaction; unsigned inputs are
+left empty. A standard PSBT is combined: a field the two disagree on, or a
+different transaction, is an error. Only an answer that is not a readable PSBT
+is read as the minimal form `uNeurai` writes, and only if its transaction is
+byte for byte the original one. A signature whose sighash byte differs from the
+input's `sighashType` is rejected (it is no longer adjusted).
+
+### `assertDeviceCanSignPSBT(base64)`
+
+Throws for what the NeuraiHW firmware cannot sign: a version-3 transaction, a
+version-3 previous transaction, an input with a `witnessScript`.
+`NeuraiESP32.signPsbt` calls it before sending anything to the device.
 
 ### `validatePSBT(base64, network)`
 
-Check if a PSBT base64 string is parseable. Returns boolean.
+Check if a PSBT base64 string is readable under the Neurai PSBT profile
+(previous transactions matching their outpoints). Returns boolean.
 
 [Check the TypeScript definitions](./dist/index.d.ts) for all the details.
 
@@ -942,6 +957,32 @@ those strings. The reviewed firmware reads `amount` using ArduinoJson
 ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
+
+## Upgrading to 0.8.0
+
+The PSBT helpers no longer use bitcoinjs-lib's `Psbt`: they are built on the
+PSBT module of `@neuraiproject/neurai-create-transaction` `^0.9.3` (BIP-174
+version 0 whose transactions use the Neurai serialization). Same functions and
+signatures; for the cases 0.7.2 supported (P2PKH and strict ECDSA v3 inputs,
+transactions version 1/2) the PSBTs and transactions are byte for byte the
+same.
+
+- `buildPSBTFromRawTransaction` accepts version-3 transactions and the new
+  `IPSBTInputMetadata.witnessScript`, for Neurai Connect signers. It now checks
+  that each metadata entry describes its input (`txid:vout`).
+- `NeuraiESP32.signPsbt` rejects, before the device is involved, what the
+  firmware cannot sign: version-3 transactions or previous transactions, and
+  inputs with a `witnessScript` (`assertDeviceCanSignPSBT`, exported).
+- `finalizeSignedPSBT` no longer changes an input's `sighashType` to match the
+  returned signature: a mismatch is an error. uNeurai's `PSBT::sign` signs with
+  the input's `PSBT_IN_SIGHASH_TYPE` (`SIGHASH_ALL` when absent), so firmware
+  answers match the PSBT they were given.
+- `finalizeSignedPSBT` no longer falls back to the minimal-PSBT reader when a
+  readable answer conflicts with the original or is for another transaction;
+  the minimal reader itself checks the transaction against the original.
+- Error messages of invalid PSBTs come from neurai-create-transaction.
+- `npm run test:package` accepts dependencies not yet on npm as tarballs:
+  `NEURAI_PACKAGE_CHECK_TARBALLS=/path/a.tgz,/path/b.tgz`.
 
 ## Upgrading to 0.7.2
 

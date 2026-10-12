@@ -65,6 +65,12 @@ export interface IPSBTInputMetadata {
   masterFingerprint?: string;
   derivationPath?: string;
   sighashType?: number;
+  /**
+   * Script behind the AuthScript commitment of the previous output (hex), e.g.
+   * the partial-fill covenant an order cancellation spends. Neurai Connect
+   * signers use it; the NeuraiHW firmware does not sign such inputs.
+   */
+  witnessScript?: string;
 }
 
 export interface IAssetTransferDisplayMetadata {
