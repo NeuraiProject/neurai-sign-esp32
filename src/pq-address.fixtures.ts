@@ -73,7 +73,10 @@ export const NODE_INVALID_ADDRESSES = [
 /**
  * Spends the node accepted (testmempoolaccept "allowed": 1): each unsigned tx
  * spends one 10 XNA output (vout 1) to NODE_V1_ADDRESS, version 2, sequence
- * 0xfffffffd, locktime 0. The sighashes are what uNeurai signed.
+ * 0xfffffffd, locktime 0. The sighashes are what uNeurai signed. They are kept
+ * as signing vectors only: since the no-RBF sequence rule a node rejects
+ * sequence 0xfffffffd (bad-txns-rbf-sequence), so new spends must use
+ * 0xfffffffe or 0xffffffff.
  */
 export const NODE_PREVOUT_AMOUNT = 1_000_000_000n;
 export const NODE_V1_UNSIGNED_TX =

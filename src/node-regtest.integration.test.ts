@@ -119,7 +119,7 @@ describe.skipIf(CLI.length === 0)("regtest node: spends built and signed by this
     const utxo = fund(v2Address, miner);
     const tx = new bitcoin.Transaction();
     tx.version = 2;
-    tx.addInput(Buffer.from(utxo.txid, "hex").reverse(), utxo.vout, 0xfffffffd);
+    tx.addInput(Buffer.from(utxo.txid, "hex").reverse(), utxo.vout, 0xfffffffe);
     tx.addOutput(encodeDestinationScript(v1Address), FUND_SATS - 5_000_000n);
 
     const v1Style = pqAuthScriptSighash({ tx, inputIndex: 0, amount: FUND_SATS });
