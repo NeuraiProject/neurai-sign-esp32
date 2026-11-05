@@ -373,9 +373,12 @@ describe("PSBT helpers", () => {
   });
 });
 
-// A version-3 testnet transaction (XNAP#POOL state thread, block 3002): two
-// outputs, an empty NIP-014 reference-input list. bitcoinjs-lib rejects it.
-const TESTNET_V3_TXID = "33c257664ed140e519accf642ca4f1937eade63be9a86eb0be93ca87db9786ac";
+// A version-3 transaction of the previous testnet (XNAP#POOL state thread, block
+// 3002, txid 33c25766…): two outputs. That testnet serialized an empty NIP-014
+// reference-input list in every version 3 transaction; since reference inputs
+// moved to flag 0x02 the same transaction has the plain layout below (and
+// another txid), which bitcoinjs-lib reads.
+const TESTNET_V3_TXID = "475b53beffb95c4a520cb221f31b0fa366721456fbe7dde7ba6a5c18d544b227";
 const TESTNET_V3_TX =
   "03000000029aba27aa998d37aa5bab819749bdb2e3185bfee56403c262e48ed86c1e647668030000" +
   "006a4730440220730f319abcda10937f4e18f59f7ada126f8141a3c8d27b3fe9219096cd841bff02" +
@@ -388,7 +391,7 @@ const TESTNET_V3_TX =
   "aec1247cf24c9d8242222435454b1c7ca27a8aa64b65d15ec038786e617409584e415023504f4f4c" +
   "00e1f5050000000054200db2113b3f2a947e4abff06ed52f52979e8b454efb5f030c9d2ca388edf6" +
   "4bf9757cb99705000000001976a914ae7684230a461dfb6db8a67ec0bd44ab2cc1718288ac000000" +
-  "0000";
+  "00";
 
 /** A version-3 transaction paying `script`, with one NIP-014 reference input. */
 function version3PreviousTx(script: Uint8Array, valueSats: bigint) {
@@ -414,9 +417,11 @@ function signLegacyInput(psbtBase64: string, keyPair: ReturnType<typeof ECPair.m
 }
 
 describe("previous transactions of every Neurai version", () => {
-  it("bitcoinjs-lib cannot read a Neurai version-3 transaction", () => {
+  it("bitcoinjs-lib reads version 3 without reference inputs, but not with them", () => {
     expect(computeTxid(TESTNET_V3_TX)).toBe(TESTNET_V3_TXID);
-    expect(() => bitcoin.Transaction.fromHex(TESTNET_V3_TX)).toThrow(/unexpected data/);
+    expect(bitcoin.Transaction.fromHex(TESTNET_V3_TX).getId()).toBe(TESTNET_V3_TXID);
+    const withRefs = version3PreviousTx(Buffer.from("76a914" + "00".repeat(20) + "88ac", "hex"), 1000n);
+    expect(() => bitcoin.Transaction.fromHex(withRefs.hex)).toThrow();
   });
 
   it("builds a PSBT spending the testnet version-3 transaction", () => {

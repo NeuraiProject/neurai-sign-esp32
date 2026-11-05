@@ -44,7 +44,7 @@ asset name, transferred amount, destination address, and fee more clearly.
 
 Before supplying UTXOs or PSBT inputs to this signing library, the host
 application must verify `getblockhash(0)` against
-`0000008b384aeffecdab182575dc4e86c9f07f90318c65088532660ed9a8a021`.
+`000000c710413a4265a996d30c86043aedef6a563900f1bc43fea61d5b2dc77d`.
 The device does not query the chain. Discard UTXOs and PSBTs assembled from
 the previous testnet. All three AuthScript address families activate on the
 reset testnet at block 10; outputs included earlier have no AuthScript spend
@@ -957,6 +957,18 @@ those strings. The reviewed firmware reads `amount` using ArduinoJson
 ArduinoJson parser was checked on the host up to MAX_MONEY; this does not replace
 an on-device signing and display check of the firmware installed on your ESP32.
 No global bigint JSON serializer is required.
+
+## Upgrading to 0.8.2
+
+Previous transactions are read with `@neuraiproject/neurai-create-transaction`
+`^0.10.0`, which follows the node's NIP-014 encoding (Neurai DePIN-Test
+`d4ff4ef`, live on the testnet reset of 2026-11-05): reference inputs are
+announced by flag `0x02` of the extended format, and a version 3 transaction
+without them has the plain layout. With 0.8.1 a PSBT whose previous
+transaction is version 3 in that encoding is unreadable. Version 3
+transactions of the previous testnet (an empty reference list after the
+outputs) no longer read. What the device signs does not change: NeuraiHW still
+refuses a version 3 transaction or previous transaction.
 
 ## Upgrading to 0.8.1
 
